@@ -230,7 +230,8 @@
   .tuto-body b{color:var(--text);}
   .tuto-step{display:flex;gap:12px;margin-bottom:14px;align-items:flex-start;}
   .tuto-step .n{width:24px;height:24px;border-radius:50%;background:linear-gradient(135deg,var(--violet),var(--pink));color:#fff;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px;}
-  .tuto-step div:last-child b{color:var(--text);display:block;margin-bottom:2px;font-size:13px;}
+  .tuto-step-title{color:var(--text);font-weight:600;font-size:13.5px;margin-bottom:3px;}
+  .tuto-step-text{color:var(--text-muted);}
 
   @media print{
     body{background:#fff !important;color:#111 !important;}
@@ -1937,13 +1938,14 @@ let importState = { rows: [], accountId: null, sheetLoaded:false };
 function renderImportar(){
   const el = document.getElementById('page-importar');
   el.innerHTML = `
-    <div class="page-head"><div><h1>Importar extrato</h1><p>CSV ou Excel (.xlsx) — nada é lançado sem sua confirmação</p></div></div>
+    <div class="page-head"><div><h1>Importar extrato</h1><p>CSV, Excel (.xlsx) ou PDF — nada é lançado sem sua confirmação</p></div></div>
     <div class="panel" style="margin-bottom:20px;">
       <div class="field-row">
         <div class="field"><label>Conta de destino</label><select id="imp_acc"><option value="">Selecione...</option>${accountOptions(null)}</select></div>
-        <div class="field"><label>Arquivo (.csv ou .xlsx)</label><input id="imp_file" type="file" accept=".csv,.xlsx,.xls"></div>
+        <div class="field"><label>Arquivo (.csv, .xlsx ou .pdf)</label><input id="imp_file" type="file" accept=".csv,.xlsx,.xls,.pdf"></div>
       </div>
-      <div id="imp_status" style="font-size:12.5px;color:var(--text-muted);"></div>
+      <div class="infobox" style="margin-top:4px;">Leitura de PDF é experimental: funciona melhor quando o extrato tem uma linha por lançamento (data, descrição e valor). Sempre revise os valores na prévia antes de confirmar — se o app não reconhecer bem, tente exportar CSV ou Excel direto no site/app do banco.</div>
+      <div id="imp_status" style="font-size:12.5px;color:var(--text-muted);margin-top:10px;"></div>
     </div>
     <div id="imp_preview"></div>
   `;
@@ -1957,6 +1959,61 @@ async function ensureSheetJS(){
     s.onload = resolve; s.onerror = reject;
     document.head.appendChild(s);
   });
+}
+async function ensurePDFJS(){
+  if(window.pdfjsLib) return;
+  await new Promise((resolve,reject)=>{
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js';
+    s.onload = resolve; s.onerror = reject;
+    document.head.appendChild(s);
+  });
+  window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
+}
+async function extractPDFLines(file){
+  await ensurePDFJS();
+  const buf = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+  const lines = [];
+  for(let p=1; p<=pdf.numPages; p++){
+    const page = await pdf.getPage(p);
+    const content = await page.getTextContent();
+    const byY = {};
+    content.items.forEach(item=>{
+      const y = Math.round(item.transform[5]/2)*2; // agrupa itens na mesma linha (com tolerância)
+      if(!byY[y]) byY[y]=[];
+      byY[y].push(item);
+    });
+    const ys = Object.keys(byY).map(Number).sort((a,b)=>b-a); // topo -> base
+    ys.forEach(y=>{
+      const sorted = byY[y].sort((a,b)=>a.transform[4]-b.transform[4]); // esquerda -> direita
+      lines.push(sorted.map(it=>it.str).join(' ').replace(/\s{2,}/g,' ').trim());
+    });
+  }
+  return lines;
+}
+function extractPDFRowsFromLines(lines){
+  const dateRe = /\d{2}\/\d{2}(?:\/\d{2,4})?/;
+  const amountRe = /(-?\s?R?\$?\s?-?\d{1,3}(?:\.\d{3})*,\d{2}|-?\s?R?\$?\s?-?\d+,\d{2})\s*([DC])?\s*$/;
+  const rows = [['Data','Descrição','Valor']];
+  let matched=0, total=0;
+  lines.forEach(line=>{
+    if(!line) return;
+    total++;
+    const dm = line.match(dateRe);
+    const am = line.match(amountRe);
+    if(!dm || !am) return;
+    const date = dm[0];
+    let val = parseAmount(am[1].replace(/R\$/,'').trim());
+    if(isNaN(val)) return;
+    if(am[2]==='D') val = -Math.abs(val);
+    if(am[2]==='C') val = Math.abs(val);
+    let desc = line.slice(dm.index+dm[0].length, am.index).trim().replace(/^[-–:\s]+|[-–:\s]+$/g,'');
+    if(!desc) desc = 'Lançamento';
+    rows.push([date, desc, String(val)]);
+    matched++;
+  });
+  return { rows, matched, total };
 }
 function parseCSVText(text){
   const rows = [];
@@ -1997,11 +2054,21 @@ async function handleImportFile(e){
   importState.accountId = document.getElementById('imp_acc').value;
   const statusEl = document.getElementById('imp_status');
   statusEl.textContent = 'Lendo arquivo...';
+  const name = file.name.toLowerCase();
   try{
     let table = [];
-    if(file.name.toLowerCase().endsWith('.csv')){
+    if(name.endsWith('.csv')){
       const text = await file.text();
       table = parseCSVText(text);
+    } else if(name.endsWith('.pdf')){
+      statusEl.textContent = 'Lendo PDF (pode levar alguns segundos)...';
+      const lines = await extractPDFLines(file);
+      const res = extractPDFRowsFromLines(lines);
+      if(res.matched===0){
+        statusEl.textContent = 'Não consegui reconhecer lançamentos neste PDF automaticamente. O layout deste extrato pode fugir do padrão esperado (data + descrição + valor por linha) — se possível, exporte como CSV ou Excel direto no site/app do banco.';
+        return;
+      }
+      table = res.rows;
     } else {
       statusEl.textContent = 'Carregando leitor de planilha...';
       await ensureSheetJS();
@@ -2013,7 +2080,8 @@ async function handleImportFile(e){
     table = table.filter(r=>r && r.some(c=>String(c||'').trim().length));
     if(table.length<2){ statusEl.textContent='Não foi possível ler linhas suficientes do arquivo.'; return; }
     importState.rawTable = table;
-    statusEl.textContent = `${table.length-1} linha(s) encontrada(s). Configure o mapeamento de colunas abaixo.`;
+    const pdfNote = name.endsWith('.pdf') ? ' no PDF — confira com atenção, a leitura de PDF é experimental' : '';
+    statusEl.textContent = `${table.length-1} linha(s) encontrada(s)${pdfNote}. Configure o mapeamento de colunas abaixo.`;
     renderColumnMapping(table);
   }catch(err){
     statusEl.textContent = 'Erro ao ler o arquivo: ' + err.message;
@@ -2132,10 +2200,10 @@ function renderTutorial(){
     <p class="tuto-intro">O Grana foi pensado para pouca fricção: a ideia é abrir a cada 15 dias mais ou menos, revisar os lançamentos, atualizar investimentos e conferir o painel — não para digitar dezenas de lançamentos todo dia.</p>
 
     ${tutoSection('Primeiros passos', `
-      <div class="tuto-step"><div class="n">1</div><div><b>Cadastre suas contas</b>Vá em <b>Contas</b> e adicione Inter, Itaú, Santander, Banco do Brasil (ou outras) com o saldo atual de cada uma.</div></div>
-      <div class="tuto-step"><div class="n">2</div><div><b>Crie algumas regras</b>Em <b>Regras</b>, ensine o app a categorizar sozinho (ex: descrição contém "Uber" → Transporte). Isso economiza tempo em todo lançamento futuro.</div></div>
-      <div class="tuto-step"><div class="n">3</div><div><b>Lance o que você tem</b>Em <b>Lançamentos</b>, registre receitas, despesas, investimentos e transferências recentes — ou use <b>Importar extrato</b> se tiver um CSV/Excel do banco.</div></div>
-      <div class="tuto-step"><div class="n">4</div><div><b>Confira o Painel</b>A <b>Visão geral</b> já mostra saldo, receitas, gastos, taxa de investimento e reserva de emergência com base no que você lançou.</div></div>
+      <div class="tuto-step"><div class="n">1</div><div><div class="tuto-step-title">Cadastre suas contas</div><div class="tuto-step-text">Vá em <b>Contas</b> e adicione Inter, Itaú, Santander, Banco do Brasil (ou outras) com o saldo atual de cada uma.</div></div></div>
+      <div class="tuto-step"><div class="n">2</div><div><div class="tuto-step-title">Crie algumas regras</div><div class="tuto-step-text">Em <b>Regras</b>, ensine o app a categorizar sozinho (ex: descrição contém "Uber" → Transporte). Isso economiza tempo em todo lançamento futuro.</div></div></div>
+      <div class="tuto-step"><div class="n">3</div><div><div class="tuto-step-title">Lance o que você tem</div><div class="tuto-step-text">Em <b>Lançamentos</b>, registre receitas, despesas, investimentos e transferências recentes — ou use <b>Importar extrato</b> se tiver um CSV, Excel ou PDF do banco.</div></div></div>
+      <div class="tuto-step"><div class="n">4</div><div><div class="tuto-step-title">Confira o Painel</div><div class="tuto-step-text">A <b>Visão geral</b> já mostra saldo, receitas, gastos, taxa de investimento e reserva de emergência com base no que você lançou.</div></div></div>
     `, true)}
 
     ${tutoSection('Visão geral', `
@@ -2204,11 +2272,12 @@ function renderTutorial(){
     `)}
 
     ${tutoSection('Importar extrato', `
-      <p>Aceita arquivos <b>CSV</b> ou <b>Excel (.xlsx)</b> do seu banco.</p>
+      <p>Aceita arquivos <b>CSV</b>, <b>Excel (.xlsx)</b> ou <b>PDF</b> do seu banco.</p>
       <ul>
         <li>Escolha a conta de destino, envie o arquivo e mapeie quais colunas são data, descrição e valor.</li>
         <li>O app aplica suas <b>Regras</b> automaticamente e sinaliza possíveis <b>duplicatas</b> (já desmarcadas por padrão).</li>
         <li>Nada entra no app até você clicar em <b>"Confirmar importação"</b> — dá pra revisar e desmarcar linhas antes.</li>
+        <li>A leitura de <b>PDF</b> é experimental: o app tenta reconhecer data, descrição e valor em cada linha do extrato. Funciona bem na maioria dos extratos simples, mas vale sempre conferir a prévia com atenção — se o layout do PDF for muito diferente, prefira exportar CSV ou Excel direto no banco.</li>
       </ul>
     `)}
 
