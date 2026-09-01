@@ -1,0 +1,10 @@
+{
+  "name": "Grana - Central Financeira",
+  "short_name": "Grana",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0F0A1E",
+  "theme_color": "#0F0A1E",
+  "icons": []
+}
