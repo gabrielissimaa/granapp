@@ -1,5 +1,5 @@
-const CACHE_NAME = 'granapp-v1';
-const CORE_ASSETS = ['./', './index.html', './manifest.json'];
+const CACHE_NAME = 'granapp-v2';
+const CORE_ASSETS = ['./', './index.html', './manifest.json', './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
