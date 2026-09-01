@@ -6,6 +6,9 @@
 <title>Grana</title>
 <meta name="theme-color" content="#0F0A1E">
 <link rel="manifest" href="manifest.json">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💸</text></svg>">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
@@ -212,6 +215,19 @@
   .sidebar-overlay.show{display:block;}
   @media (max-width:760px){ .hamburger{display:flex;} }
 
+  @media print{
+    body{background:#fff !important;color:#111 !important;}
+    .sidebar,.hamburger,.sidebar-overlay,.toast,#overlay,.no-print{display:none !important;}
+    main{padding:0 !important;max-width:100% !important;}
+    .panel,.card,.row,.chip,.hero-cell{background:#fff !important;border-color:#ccc !important;box-shadow:none !important;color:#111 !important;}
+    .hero-cell.total .value{-webkit-text-fill-color:#111 !important;background:none !important;color:#111 !important;}
+    .num,h1,h2,h3,.card .v,.card .t,.card .k,.chip .val,.chip .lbl,table.datatable td,table.datatable th{color:#111 !important;}
+    table.datatable th{color:#555 !important;border-color:#ccc !important;}
+    table.datatable td{border-color:#eee !important;}
+    .pos{color:#0a7a4a !important;} .neg{color:#b23b3b !important;}
+    .badge{-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+  }
+
   /* Auth gate */
   #authGate{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:
       radial-gradient(1100px 700px at 100% -10%, rgba(139,108,255,0.25), transparent 60%),
@@ -276,6 +292,7 @@
     <div class="page" id="page-receitas"></div>
     <div class="page" id="page-trabalhos"></div>
     <div class="page" id="page-orcamento"></div>
+    <div class="page" id="page-dre"></div>
     <div class="page" id="page-investimentos"></div>
     <div class="page" id="page-patrimonio"></div>
     <div class="page" id="page-metas"></div>
@@ -355,6 +372,7 @@ const NAV_GROUPS = [
   ]},
   {label:'PLANEJAMENTO', items:[
     {id:'orcamento', label:'Orçamento', icon:'M9 17V9m4 8V5m4 12v-6M5 21h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v14a2 2 0 002 2z'},
+    {id:'dre', label:'DRE', icon:'M9 12h6m-6 4h4M8 4h8a2 2 0 012 2v13l-2-1.5-2 1.5-2-1.5-2 1.5-2-1.5L6 19V6a2 2 0 012-2z'},
     {id:'metas', label:'Metas', icon:'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z'},
     {id:'reserva', label:'Reserva de emergência', icon:'M12 22s8-4.5 8-11.8V5l-8-3-8 3v5.2C4 17.5 12 22 12 22z'},
     {id:'investimentos', label:'Investimentos', icon:'M3 17l6-6 4 4 8-8M21 7v6h-6'},
@@ -962,7 +980,8 @@ function renderTxExtraFields(t){
     `;
   } else if(txTypeState==='receita'){
     box.innerHTML = `
-      <div class="field"><label>Fonte</label><select id="f_source">${RECEITA_SOURCES.map(s=>`<option ${t&&t.source===s?'selected':''}>${s}</option>`).join('')}</select></div>
+      <div class="field"><label>Fonte</label><select id="f_source" onchange="onReceitaSourceChange()">${RECEITA_SOURCES.map(s=>`<option ${t&&t.source===s?'selected':''}>${s}</option>`).join('')}</select></div>
+      <div class="field"><label>Finalidade</label><select id="f_rxpurpose"><option value="pessoal" ${(t?receitaPurpose(t):purposeDefaultForSource(document.getElementById('f_source')?document.getElementById('f_source').value:'Plantão'))==='pessoal'?'selected':''}>Pessoal</option><option value="profissional" ${(t?receitaPurpose(t):purposeDefaultForSource('Plantão'))==='profissional'?'selected':''}>Profissional</option></select></div>
       <div class="field"><label>Conta</label><select id="f_acc"><option value="">—</option>${accountOptions(t?t.accountId:null)}</select></div>
       <div class="field"><label>Status</label><select id="f_status"><option value="Recebido" ${!t||t.status==='Recebido'?'selected':''}>Recebido</option><option value="Previsto" ${t&&t.status==='Previsto'?'selected':''}>Previsto</option></select></div>
       <div class="field"><label>Observações</label><input id="f_notes" value="${t?escapeHtml(t.notes||''):''}" placeholder="opcional"></div>
@@ -983,6 +1002,15 @@ function renderTxExtraFields(t){
     `;
   }
 }
+function onReceitaSourceChange(){
+  const purpSel = document.getElementById('f_rxpurpose');
+  if(purpSel) purpSel.value = purposeDefaultForSource(document.getElementById('f_source').value);
+}
+function purposeDefaultForSource(source){
+  const map = {'Pensão':'pessoal','Plantão':'profissional','RPA':'profissional','CLT':'profissional','PJ':'profissional','Consultório':'profissional','Outros':'pessoal'};
+  return map[source] || 'pessoal';
+}
+function receitaPurpose(t){ return t.purpose || purposeDefaultForSource(t.source); }
 function onDescInput(){
   if(document.getElementById('f_cat')){
     const desc = document.getElementById('f_desc').value;
@@ -1011,6 +1039,7 @@ function saveTx(id){
   } else if(txTypeState==='receita'){
     extra.source = document.getElementById('f_source').value;
     extra.category = document.getElementById('f_source').value;
+    extra.purpose = document.getElementById('f_rxpurpose').value;
     extra.accountId = document.getElementById('f_acc').value;
     extra.status = document.getElementById('f_status').value;
     extra.notes = document.getElementById('f_notes').value;
@@ -1230,6 +1259,121 @@ function updateBudget(cat, value){
   const v = parseFloat(value);
   data.budgetOverrides[cat] = isNaN(v) ? undefined : v;
   scheduleSave();
+}
+
+/* =========================================================
+   RENDER: DRE (Demonstração de Resultado)
+========================================================= */
+let dreState = { period:'mes-atual', customStart:null, customEnd:null, scope:'consolidado' };
+function scopeLabel(s){ return s==='pessoal'?'Pessoal': s==='profissional'?'Profissional':'Consolidado (Pessoal + Profissional)'; }
+function computeDRE(range, scope){
+  const matches = (p) => scope==='consolidado' ? true : p===scope;
+
+  const receitaTx = data.transactions.filter(t=>t.type==='receita' && inRange(t.date,range) && matches(receitaPurpose(t)));
+  const receitaShifts = matches('profissional') ? data.shifts.filter(s=>s.status==='Recebido' && inRange(s.actualDate||s.date,range)) : [];
+
+  const receitaBySource = {};
+  receitaTx.forEach(t=>{ const k=t.source||t.category||'Outros'; receitaBySource[k]=(receitaBySource[k]||0)+t.amount; });
+  if(receitaShifts.length){
+    const totalShifts = receitaShifts.reduce((s,sh)=>s+(sh.netAmount||sh.grossAmount||0),0);
+    receitaBySource['Plantões'] = (receitaBySource['Plantões']||0) + totalShifts;
+  }
+  const totalReceita = Object.values(receitaBySource).reduce((a,b)=>a+b,0);
+
+  const despesaTx = data.transactions.filter(t=>t.type==='despesa' && inRange(t.date,range) && matches(t.purpose||'pessoal'));
+  const despesaByCat = {};
+  despesaTx.forEach(t=>{ despesaByCat[t.category]=(despesaByCat[t.category]||0)+t.amount; });
+  const totalDespesa = Object.values(despesaByCat).reduce((a,b)=>a+b,0);
+
+  const fixo = despesaTx.filter(t=>t.fixedVariable==='fixo').reduce((s,t)=>s+t.amount,0);
+  const variavel = despesaTx.filter(t=>t.fixedVariable==='variavel').reduce((s,t)=>s+t.amount,0);
+  const essencial = despesaTx.filter(t=>t.essential==='essencial').reduce((s,t)=>s+t.amount,0);
+  const naoEssencial = despesaTx.filter(t=>t.essential==='nao-essencial').reduce((s,t)=>s+t.amount,0);
+
+  const investido = data.transactions.filter(t=>t.type==='investimento' && inRange(t.date,range) && (scope==='consolidado' || scope==='pessoal')).reduce((s,t)=>s+t.amount,0);
+
+  const resultado = totalReceita - totalDespesa;
+  const margem = totalReceita>0 ? (resultado/totalReceita)*100 : 0;
+
+  return { receitaBySource, totalReceita, despesaByCat, totalDespesa, fixo, variavel, essencial, naoEssencial, investido, resultado, margem };
+}
+function setDreScope(s){ dreState.scope = s; renderDRE(); }
+function renderDRE(){
+  const el = document.getElementById('page-dre');
+  const range = rangeForPeriod(dreState.period, dreState.customStart, dreState.customEnd);
+  const r = computeDRE(range, dreState.scope);
+  const receitaRows = Object.entries(r.receitaBySource).sort((a,b)=>b[1]-a[1]);
+  const despesaRows = Object.entries(r.despesaByCat).sort((a,b)=>b[1]-a[1]);
+
+  el.innerHTML = `
+    <div class="page-head">
+      <div><h1>DRE</h1><p>Demonstração de Resultado — receitas menos despesas do período</p></div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <select class="period" id="drePeriod">
+          <option value="mes-atual">Mês atual</option>
+          <option value="mes-anterior">Mês anterior</option>
+          <option value="3m">Últimos 3 meses</option>
+          <option value="6m">Últimos 6 meses</option>
+          <option value="12m">Últimos 12 meses</option>
+          <option value="custom">Personalizado</option>
+        </select>
+        ${dreState.period==='custom' ? `
+          <input type="date" class="period" id="dreCustomStart" value="${dreState.customStart||''}">
+          <input type="date" class="period" id="dreCustomEnd" value="${dreState.customEnd||''}">
+        ` : ''}
+        <button class="btn ghost no-print" onclick="window.print()">🖨️ Exportar / Imprimir</button>
+      </div>
+    </div>
+
+    <div class="toggle-row no-print" style="max-width:440px;">
+      <button class="drescope ${dreState.scope==='pessoal'?'on':''}" onclick="setDreScope('pessoal')">Pessoal</button>
+      <button class="drescope ${dreState.scope==='profissional'?'on':''}" onclick="setDreScope('profissional')">Profissional</button>
+      <button class="drescope ${dreState.scope==='consolidado'?'on':''}" onclick="setDreScope('consolidado')">Consolidado</button>
+    </div>
+
+    <div class="panel dre-report" style="margin-top:16px;max-width:640px;">
+      <div style="text-align:center;margin-bottom:22px;">
+        <h2 style="font-size:18px;">DRE — ${scopeLabel(dreState.scope)}</h2>
+        <p style="color:var(--text-muted);font-size:12.5px;margin-top:4px;">Período: ${fmtDate(range.start)} a ${fmtDate(range.end)}</p>
+      </div>
+
+      <table class="datatable" style="margin-bottom:20px;">
+        <thead><tr><th>Receitas</th><th style="text-align:right;">Valor</th><th style="text-align:right;">%</th></tr></thead>
+        <tbody>
+          ${receitaRows.length ? receitaRows.map(([k,v])=>`
+            <tr><td>${escapeHtml(k)}</td><td class="num" style="text-align:right;">${fmtMoney(v)}</td><td class="num" style="text-align:right;color:var(--text-muted);">${r.totalReceita>0?((v/r.totalReceita)*100).toFixed(0):0}%</td></tr>
+          `).join('') : '<tr><td colspan="3" class="empty">Sem receitas no período.</td></tr>'}
+        </tbody>
+        <tfoot><tr style="font-weight:700;"><td style="border-top:2px solid var(--border-hi);">Total de Receitas</td><td class="num pos" style="text-align:right;border-top:2px solid var(--border-hi);">${fmtMoney(r.totalReceita)}</td><td style="border-top:2px solid var(--border-hi);"></td></tr></tfoot>
+      </table>
+
+      <table class="datatable" style="margin-bottom:20px;">
+        <thead><tr><th>Despesas</th><th style="text-align:right;">Valor</th><th style="text-align:right;">%</th></tr></thead>
+        <tbody>
+          ${despesaRows.length ? despesaRows.map(([k,v])=>`
+            <tr><td><span class="badge" style="background:${colorForCategory(k)}26;color:${colorForCategory(k)}">${escapeHtml(k)}</span></td><td class="num" style="text-align:right;">${fmtMoney(v)}</td><td class="num" style="text-align:right;color:var(--text-muted);">${r.totalDespesa>0?((v/r.totalDespesa)*100).toFixed(0):0}%</td></tr>
+          `).join('') : '<tr><td colspan="3" class="empty">Sem despesas no período.</td></tr>'}
+        </tbody>
+        <tfoot><tr style="font-weight:700;"><td style="border-top:2px solid var(--border-hi);">Total de Despesas</td><td class="num neg" style="text-align:right;border-top:2px solid var(--border-hi);">${fmtMoney(r.totalDespesa)}</td><td style="border-top:2px solid var(--border-hi);"></td></tr></tfoot>
+      </table>
+
+      <div class="chipgrid" style="margin-bottom:20px;">
+        <div class="chip"><div class="lbl">Fixas</div><div class="val">${fmtMoney(r.fixo)}</div></div>
+        <div class="chip"><div class="lbl">Variáveis</div><div class="val">${fmtMoney(r.variavel)}</div></div>
+        <div class="chip"><div class="lbl">Essenciais</div><div class="val">${fmtMoney(r.essencial)}</div></div>
+        <div class="chip"><div class="lbl">Não essenciais</div><div class="val">${fmtMoney(r.naoEssencial)}</div></div>
+      </div>
+
+      <div class="hero" style="grid-template-columns:1fr 1fr;margin-bottom:0;">
+        <div class="hero-cell total"><div class="label">Resultado do período</div><div class="value num ${r.resultado>=0?'pos':'neg'}">${fmtMoney(r.resultado)}</div><div class="sub">${r.resultado>=0?'Superávit':'Déficit'}</div></div>
+        <div class="hero-cell"><div class="label">Margem</div><div class="value num">${r.margem.toFixed(1)}%</div><div class="sub">Resultado / Receitas</div></div>
+      </div>
+    </div>
+  `;
+  document.getElementById('drePeriod').value = dreState.period;
+  document.getElementById('drePeriod').addEventListener('change', e=>{ dreState.period=e.target.value; renderDRE(); });
+  const ds = document.getElementById('dreCustomStart'); if(ds) ds.addEventListener('change', e=>{ dreState.customStart=e.target.value; renderDRE(); });
+  const de = document.getElementById('dreCustomEnd'); if(de) de.addEventListener('change', e=>{ dreState.customEnd=e.target.value; renderDRE(); });
 }
 
 /* =========================================================
@@ -1971,6 +2115,7 @@ function renderAll(){
   renderReceitas();
   renderTrabalhos();
   renderOrcamento();
+  renderDRE();
   renderInvestimentos();
   renderPatrimonio();
   renderMetas();
