@@ -215,6 +215,23 @@
   .sidebar-overlay.show{display:block;}
   @media (max-width:760px){ .hamburger{display:flex;} }
 
+  /* Tutorial (accordion) */
+  .tuto-intro{color:var(--text-muted);font-size:13.5px;line-height:1.6;margin-bottom:22px;max-width:640px;}
+  .tuto-section{background:var(--surface);border:1px solid var(--border);border-radius:14px;margin-bottom:10px;overflow:hidden;max-width:720px;}
+  .tuto-section summary{padding:15px 18px;cursor:pointer;font-weight:600;color:var(--text);list-style:none;display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:13.5px;}
+  .tuto-section summary::-webkit-details-marker{display:none;}
+  .tuto-section summary .plus{color:var(--violet);font-size:19px;font-weight:400;flex-shrink:0;transition:transform .2s;}
+  .tuto-section[open] summary .plus{transform:rotate(45deg);}
+  .tuto-section summary:hover{background:var(--surface-hi);}
+  .tuto-body{padding:2px 18px 18px 18px;color:var(--text-muted);font-size:13px;line-height:1.65;}
+  .tuto-body p{margin:0 0 10px 0;}
+  .tuto-body ul{margin:6px 0 12px 0;padding-left:18px;}
+  .tuto-body li{margin-bottom:6px;}
+  .tuto-body b{color:var(--text);}
+  .tuto-step{display:flex;gap:12px;margin-bottom:14px;align-items:flex-start;}
+  .tuto-step .n{width:24px;height:24px;border-radius:50%;background:linear-gradient(135deg,var(--violet),var(--pink));color:#fff;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px;}
+  .tuto-step div:last-child b{color:var(--text);display:block;margin-bottom:2px;font-size:13px;}
+
   @media print{
     body{background:#fff !important;color:#111 !important;}
     .sidebar,.hamburger,.sidebar-overlay,.toast,#overlay,.no-print{display:none !important;}
@@ -302,6 +319,7 @@
     <div class="page" id="page-regras"></div>
     <div class="page" id="page-contas"></div>
     <div class="page" id="page-importar"></div>
+    <div class="page" id="page-tutorial"></div>
   </main>
 </div>
 
@@ -383,6 +401,9 @@ const NAV_GROUPS = [
     {id:'impostos', label:'Impostos', icon:'M9 12h6m-6 4h6M7 4h10a2 2 0 012 2v13l-3-2-2 2-2-2-2 2-2-2-3 2V6a2 2 0 012-2z'},
     {id:'regras', label:'Regras', icon:'M4 6h16M7 12h10M10 18h4'},
     {id:'importar', label:'Importar extrato', icon:'M12 3v12m0 0l-4-4m4 4l4-4M4 19h16'},
+  ]},
+  {label:'AJUDA', items:[
+    {id:'tutorial', label:'Tutorial', icon:'M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z'},
   ]},
 ];
 
@@ -2096,6 +2117,116 @@ function confirmImport(){
 }
 
 /* =========================================================
+   RENDER: TUTORIAL
+========================================================= */
+function tutoSection(title, bodyHtml, openByDefault){
+  return `<details class="tuto-section" ${openByDefault?'open':''}>
+    <summary>${escapeHtml(title)}<span class="plus">+</span></summary>
+    <div class="tuto-body">${bodyHtml}</div>
+  </details>`;
+}
+function renderTutorial(){
+  const el = document.getElementById('page-tutorial');
+  el.innerHTML = `
+    <div class="page-head"><div><h1>Tutorial</h1><p>Como usar o Grana no dia a dia</p></div></div>
+    <p class="tuto-intro">O Grana foi pensado para pouca fricção: a ideia é abrir a cada 15 dias mais ou menos, revisar os lançamentos, atualizar investimentos e conferir o painel — não para digitar dezenas de lançamentos todo dia.</p>
+
+    ${tutoSection('Primeiros passos', `
+      <div class="tuto-step"><div class="n">1</div><div><b>Cadastre suas contas</b>Vá em <b>Contas</b> e adicione Inter, Itaú, Santander, Banco do Brasil (ou outras) com o saldo atual de cada uma.</div></div>
+      <div class="tuto-step"><div class="n">2</div><div><b>Crie algumas regras</b>Em <b>Regras</b>, ensine o app a categorizar sozinho (ex: descrição contém "Uber" → Transporte). Isso economiza tempo em todo lançamento futuro.</div></div>
+      <div class="tuto-step"><div class="n">3</div><div><b>Lance o que você tem</b>Em <b>Lançamentos</b>, registre receitas, despesas, investimentos e transferências recentes — ou use <b>Importar extrato</b> se tiver um CSV/Excel do banco.</div></div>
+      <div class="tuto-step"><div class="n">4</div><div><b>Confira o Painel</b>A <b>Visão geral</b> já mostra saldo, receitas, gastos, taxa de investimento e reserva de emergência com base no que você lançou.</div></div>
+    `, true)}
+
+    ${tutoSection('Visão geral', `
+      <p>É a tela inicial: mostra o resumo do período que você escolher (mês atual, últimos 3/6/12 meses ou personalizado).</p>
+      <ul>
+        <li><b>Patrimônio líquido</b>: contas + investimentos, sempre em tempo real.</li>
+        <li><b>Indicadores</b>: taxa de investimento, gastos fixos/variáveis, essenciais/não essenciais, profissionais.</li>
+        <li><b>Evolução</b>: gráfico de receitas, despesas e investido nos últimos 6 meses.</li>
+        <li>A seção <b>Análise</b> só aparece depois de ~2 meses de uso — com pouco histórico, médias e tendências não são confiáveis.</li>
+      </ul>
+    `)}
+
+    ${tutoSection('Lançamentos', `
+      <p>O registro central de tudo: receitas, despesas, investimentos e transferências.</p>
+      <ul>
+        <li>Toda <b>despesa</b> tem 3 classificações independentes: <b>Fixo/Variável</b>, <b>Essencial/Não essencial</b> e <b>Pessoal/Profissional</b> — nada é presumido pelo nome da categoria, você escolhe.</li>
+        <li><b>Transferências</b> entre suas próprias contas e <b>aportes em investimento</b> não entram como receita nem despesa — evita contar o mesmo dinheiro duas vezes.</li>
+        <li>Use os filtros no topo (inclusive "só a classificar") para revisar rapidamente o que falta categorizar.</li>
+        <li>Ao digitar a descrição, as <b>Regras</b> já preenchem categoria e classificação automaticamente, se houver uma que combine.</li>
+      </ul>
+    `)}
+
+    ${tutoSection('Receitas', `
+      <p>Lista só os lançamentos do tipo receita, com a fonte (Pensão, Plantão, RPA, CLT, PJ, Consultório...).</p>
+      <p>Cada receita tem uma <b>Finalidade</b> (Pessoal/Profissional) — isso é o que alimenta a separação Pessoal x Profissional no <b>DRE</b>. Pensão já vem sugerida como pessoal; plantões, RPA, CLT, PJ e consultório vêm como profissional (dá pra mudar se algum caso for diferente).</p>
+    `)}
+
+    ${tutoSection('Plantões & Trabalhos', `
+      <p>Área específica para sua atividade médica — mais detalhada que um lançamento comum.</p>
+      <ul>
+        <li>Registre local, tipo de trabalho, horas, valor bruto/líquido, pagador e status (Previsto, Recebido, Atrasado).</li>
+        <li>O app calcula sozinho: quantidade de plantões, horas trabalhadas, receita recebida, <b>média por plantão</b> e <b>média por hora</b>, e valores pendentes.</li>
+        <li>Plantões com status "Recebido" já entram automaticamente nas receitas do Painel e do DRE — não precisa duplicar lançando de novo em Lançamentos.</li>
+        <li>Quando você começar o CLT, pode registrar a remuneração aqui também, sem precisar de uma área nova.</li>
+      </ul>
+    `)}
+
+    ${tutoSection('Orçamento', `
+      <p>Sugere um limite de gasto por categoria com base na <b>média dos últimos 3 meses</b> — você não precisa definir tudo do zero.</p>
+      <p>Cada valor sugerido é editável (clique e digite o seu). A tabela mostra realizado, diferença e % utilizado no mês atual. No fim da página, uma <b>faixa de aporte mensal sugerida</b> é calculada a partir da sua renda e gastos essenciais reais — é uma ferramenta de planejamento, não uma recomendação financeira.</p>
+    `)}
+
+    ${tutoSection('DRE', `
+      <p>Demonstração de Resultado: receitas menos despesas, no formato de um relatório contábil simplificado.</p>
+      <ul>
+        <li>Escolha entre <b>Pessoal</b>, <b>Profissional</b> ou <b>Consolidado</b> (as duas juntas).</li>
+        <li>Mostra receitas por fonte, despesas por categoria, subtotais fixo/variável e essencial/não essencial, e o resultado do período (superávit ou déficit) com a margem.</li>
+        <li>O botão <b>"Exportar / Imprimir"</b> abre o diálogo de impressão do navegador — escolha "Salvar como PDF" para gerar um arquivo, útil para levar ao contador ou guardar registro.</li>
+      </ul>
+    `)}
+
+    ${tutoSection('Investimentos e Patrimônio', `
+      <p><b>Investimentos</b> guarda cada aplicação (Tesouro Direto, CDB, ações...) com valor aportado, valor atual, objetivo (ex: Reserva de emergência, Residência médica) e rentabilidade calculada automaticamente.</p>
+      <p><b>Patrimônio</b> soma contas + investimentos menos dívidas (cartão de crédito). Como não há como recalcular saldos antigos automaticamente, use o botão <b>"Registrar snapshot de hoje"</b> a cada 15 dias ou assim — isso cria um ponto no gráfico de evolução ao longo do tempo.</p>
+    `)}
+
+    ${tutoSection('Metas e Reserva de emergência', `
+      <p><b>Metas</b> é de uso livre — crie quantas quiser, com valor alvo, valor atual e prazo opcional (o app calcula o aporte mensal necessário).</p>
+      <p><b>Reserva de emergência</b> é calculada de um jeito específico: você escolhe quantos meses de cobertura quer (3/6/9/12), e o app multiplica isso pelo seu <b>gasto essencial médio real</b> dos últimos meses. Marque uma conta como "esta é minha reserva" (em Contas) ou um investimento com objetivo "Reserva de emergência" para que o valor conte automaticamente aqui.</p>
+    `)}
+
+    ${tutoSection('Assinaturas, Impostos e Contas', `
+      <p><b>Assinaturas</b>: cadastre gastos recorrentes (Caveo, Wellhub, seguro...) e veja o custo mensal/anual total. O botão "Lançar pagamento agora" cria o lançamento correspondente sem precisar preencher tudo de novo.</p>
+      <p><b>Impostos</b>: registros por tipo de renda (PF, RPA, CLT, PJ) com valor estimado, vencimento e status — sempre como estimativa para organização pessoal, não substitui contador.</p>
+      <p><b>Contas</b>: cadastro de bancos e cartões, com saldo atual de cada um.</p>
+    `)}
+
+    ${tutoSection('Importar extrato', `
+      <p>Aceita arquivos <b>CSV</b> ou <b>Excel (.xlsx)</b> do seu banco.</p>
+      <ul>
+        <li>Escolha a conta de destino, envie o arquivo e mapeie quais colunas são data, descrição e valor.</li>
+        <li>O app aplica suas <b>Regras</b> automaticamente e sinaliza possíveis <b>duplicatas</b> (já desmarcadas por padrão).</li>
+        <li>Nada entra no app até você clicar em <b>"Confirmar importação"</b> — dá pra revisar e desmarcar linhas antes.</li>
+      </ul>
+    `)}
+
+    ${tutoSection('Sincronização e uso offline', `
+      <p>O indicador no canto inferior esquerdo do menu mostra o status: <b>sincronizado</b> (tudo salvo na nuvem), <b>salvando…</b> ou <b>sem conexão</b>.</p>
+      <p>O app grava tudo no seu dispositivo primeiro (funciona sem internet) e sincroniza com a nuvem assim que a conexão volta — assim você não perde nada mesmo lançando algo no meio de um plantão sem sinal. Abrindo o app em outro aparelho com o mesmo login, os dados aparecem sincronizados.</p>
+      <p>Use <b>"Exportar backup (.json)"</b> de vez em quando para ter uma cópia extra dos seus dados guardada com você.</p>
+    `)}
+
+    ${tutoSection('Instalar na tela de início', `
+      <p><b>iPhone (Safari):</b> abra o site, toque no ícone de compartilhar (quadrado com seta para cima) e escolha "Adicionar à Tela de Início".</p>
+      <p><b>Android (Chrome):</b> abra o site, toque no menu (⋮) e escolha "Adicionar à tela inicial" ou "Instalar app".</p>
+      <p>Depois de instalado, o Grana abre como um app normal, com ícone próprio, sem a barra de endereço do navegador.</p>
+    `)}
+  `;
+}
+
+/* =========================================================
    MODAIS GENÉRICOS / DELEÇÃO
 ========================================================= */
 function closeModal(){ document.getElementById('overlay').classList.remove('show'); }
@@ -2125,6 +2256,7 @@ function renderAll(){
   renderRegras();
   renderContas();
   renderImportar();
+  renderTutorial();
 }
 
 /* =========================================================
