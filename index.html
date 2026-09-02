@@ -363,6 +363,9 @@ function ensureCategoriesSeeded(){
     ];
   }
 }
+function ensureAccountBalanceDatesSeeded(){
+  data.accounts.forEach(a=>{ if(!a.balanceDate) a.balanceDate = todayStr(); });
+}
 function categoryNames(group){
   if(!data.categories) return [];
   if(group==='all') return data.categories.map(c=>c.name);
@@ -550,7 +553,7 @@ async function loadData(){
       data = Object.assign(structuredCloneSafe(data), cached.data);
     }
   }catch(e){}
-  ensureCategoriesSeeded();
+  ensureCategoriesSeeded(); ensureAccountBalanceDatesSeeded();
   loaded = true;
   renderAll();
   setSync(navigator.onLine ? 'warn' : 'bad');
@@ -563,7 +566,7 @@ async function loadData(){
         const remoteUpdatedAt = new Date(row.updated_at).getTime();
         if(remoteUpdatedAt >= localUpdatedAt){
           data = Object.assign(structuredCloneSafe(data), row.data);
-          ensureCategoriesSeeded();
+          ensureCategoriesSeeded(); ensureAccountBalanceDatesSeeded();
           await idbSet('app-data', {data, updatedAt: remoteUpdatedAt});
           renderAll();
         }
@@ -699,8 +702,31 @@ function applyRulesToExisting(){
 /* =========================================================
    CÁLCULOS FINANCEIROS
 ========================================================= */
+function applyOutflow(bal, amount, account){ return account.type==='Cartão de crédito' ? bal + amount : bal - amount; }
+function applyInflow(bal, amount, account){ return account.type==='Cartão de crédito' ? bal - amount : bal + amount; }
+function accountBalance(a){
+  const anchor = a.balanceDate || '1900-01-01';
+  let bal = a.balance || 0;
+  data.transactions.forEach(t=>{
+    if(t.date <= anchor) return;
+    if(t.type==='despesa' && t.accountId===a.id) bal = applyOutflow(bal, t.amount, a);
+    else if(t.type==='receita' && t.accountId===a.id) bal = applyInflow(bal, t.amount, a);
+    else if(t.type==='investimento' && t.accountId===a.id) bal = applyOutflow(bal, t.amount, a);
+    else if(t.type==='transferencia'){
+      if(t.accountId===a.id) bal = applyOutflow(bal, t.amount, a);
+      if(t.toAccountId===a.id) bal = applyInflow(bal, t.amount, a);
+    }
+  });
+  data.shifts.forEach(sh=>{
+    if(sh.status==='Recebido' && sh.accountId===a.id){
+      const d = sh.actualDate || sh.date;
+      if(d > anchor) bal = applyInflow(bal, (sh.netAmount||sh.grossAmount||0), a);
+    }
+  });
+  return bal;
+}
 function accountsNetBalance(){
-  return data.accounts.reduce((s,a)=> s + (a.type==='Cartão de crédito' ? -Math.abs(a.balance) : a.balance), 0);
+  return data.accounts.reduce((s,a)=> s + (a.type==='Cartão de crédito' ? -Math.abs(accountBalance(a)) : accountBalance(a)), 0);
 }
 function investmentsTotal(){ return data.investments.reduce((s,i)=>s+i.currentValue,0); }
 function netWorth(){ return accountsNetBalance() + investmentsTotal(); }
@@ -728,7 +754,7 @@ function essentialAvgMonthly(nMonths){
   return {avg: withData.reduce((a,b)=>a+b,0)/withData.length, monthsWithData: withData.length};
 }
 function reserveCurrent(){
-  const accReserve = data.accounts.filter(a=>a.isReserve).reduce((s,a)=>s+a.balance,0);
+  const accReserve = data.accounts.filter(a=>a.isReserve).reduce((s,a)=>s+accountBalance(a),0);
   const invReserve = data.investments.filter(i=>i.objective==='Reserva de emergência').reduce((s,i)=>s+i.currentValue,0);
   return accReserve + invReserve;
 }
@@ -1581,8 +1607,8 @@ function confirmAporte(investmentId){
 ========================================================= */
 function renderPatrimonio(){
   const el = document.getElementById('page-patrimonio');
-  const dinheiro = data.accounts.filter(a=>a.type!=='Cartão de crédito').reduce((s,a)=>s+a.balance,0);
-  const dividas = data.accounts.filter(a=>a.type==='Cartão de crédito').reduce((s,a)=>s+Math.abs(a.balance),0);
+  const dinheiro = data.accounts.filter(a=>a.type!=='Cartão de crédito').reduce((s,a)=>s+accountBalance(a),0);
+  const dividas = data.accounts.filter(a=>a.type==='Cartão de crédito').reduce((s,a)=>s+Math.abs(accountBalance(a)),0);
   const investido = investmentsTotal();
   const total = dinheiro + investido - dividas;
   const snaps = [...data.netWorthSnapshots].sort((a,b)=>a.date.localeCompare(b.date));
@@ -1617,8 +1643,8 @@ function renderPatrimonio(){
   `;
 }
 function registerSnapshot(){
-  const dinheiro = data.accounts.filter(a=>a.type!=='Cartão de crédito').reduce((s,a)=>s+a.balance,0);
-  const dividas = data.accounts.filter(a=>a.type==='Cartão de crédito').reduce((s,a)=>s+Math.abs(a.balance),0);
+  const dinheiro = data.accounts.filter(a=>a.type!=='Cartão de crédito').reduce((s,a)=>s+accountBalance(a),0);
+  const dividas = data.accounts.filter(a=>a.type==='Cartão de crédito').reduce((s,a)=>s+Math.abs(accountBalance(a)),0);
   const total = dinheiro + investmentsTotal() - dividas;
   const today = todayStr();
   const existing = data.netWorthSnapshots.find(s=>s.date===today);
@@ -2116,15 +2142,18 @@ function deleteCategoryFlow(id){
 ========================================================= */
 function accountCardHtml(a,i){
   const color = colorForIndex(i);
+  const bal = accountBalance(a);
+  const changed = Math.abs(bal - (a.balance||0)) > 0.005;
   return `
     <div class="card" style="--accent:${color}">
       <div class="actions">
-        <button class="iconbtn" onclick="openAccModal('${a.id}')" title="Editar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M11 4H6a2 2 0 00-2 2v12a2 2 0 002 2h12a2 2 0 002-2v-5M18.5 2.5a2.1 2.1 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+        <button class="iconbtn" onclick="openAccModal('${a.id}')" title="Editar / reconciliar saldo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M11 4H6a2 2 0 00-2 2v12a2 2 0 002 2h12a2 2 0 002-2v-5M18.5 2.5a2.1 2.1 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
         <button class="iconbtn" onclick="deleteEntry('accounts','${a.id}')" title="Excluir"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6 7h12M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2m2 0v13a1 1 0 01-1 1H8a1 1 0 01-1-1V7h10z"/></svg></button>
       </div>
       <div class="k">${escapeHtml(a.type)}${a.isReserve?' · Reserva':''}</div>
-      <div class="v num">${fmtMoney(a.balance)}</div>
+      <div class="v num">${fmtMoney(bal)}</div>
       <div class="t">${escapeHtml(a.name)}${a.bank?' · '+escapeHtml(a.bank):''}</div>
+      <div class="meta">${changed ? `calculado a partir do saldo inicial (${fmtMoney(a.balance||0)} em ${fmtDate(a.balanceDate)})` : `saldo inicial desde ${fmtDate(a.balanceDate)}`}</div>
     </div>`;
 }
 function renderContas(){
@@ -2134,6 +2163,7 @@ function renderContas(){
       <div><h1>Contas</h1><p>${data.accounts.length} conta(s) · saldo líquido ${fmtMoney(accountsNetBalance())}</p></div>
       <button class="btn accent" onclick="openAccModal()">+ Nova conta</button>
     </div>
+    <div class="infobox" style="margin-bottom:18px;">O saldo é calculado automaticamente: <b>saldo inicial</b> + todos os lançamentos, plantões recebidos e aportes daquela conta desde a data do saldo inicial. Se algum dia o número divergir do seu banco (por algo que você não lançou), é só abrir a conta e reconciliar — atualize o "Saldo inicial" e a "Data" para o dia de hoje, e o cálculo recomeça dali.</div>
     <div class="cards">${data.accounts.length ? data.accounts.map((a,i)=>accountCardHtml(a,i)).join('') : '<div class="empty">Nenhuma conta cadastrada. Cadastre Inter, Itaú, Santander e Banco do Brasil para começar.</div>'}</div>
   `;
 }
@@ -2148,7 +2178,11 @@ function openAccModal(id){
       <div class="field"><label>Banco</label><input id="f_bank" value="${a?escapeHtml(a.bank||''):''}" placeholder="Ex: Inter, Nubank, C6 Bank..." list="bankPresets"></div>
       <div class="field"><label>Tipo</label><select id="f_type">${ACCOUNT_TYPES.map(t=>`<option ${a&&a.type===t?'selected':''}>${t}</option>`).join('')}</select></div>
     </div>
-    <div class="field"><label>Saldo atual (R$)</label><input id="f_balance" type="number" step="0.01" value="${a?a.balance:''}" placeholder="0,00"></div>
+    <div class="field-row">
+      <div class="field"><label>Saldo inicial (R$)</label><input id="f_balance" type="number" step="0.01" value="${a?a.balance:''}" placeholder="0,00"></div>
+      <div class="field"><label>Data deste saldo</label><input id="f_balanceDate" type="date" value="${a&&a.balanceDate?a.balanceDate:todayStr()}"></div>
+    </div>
+    <div class="infobox" style="margin-bottom:14px;">O app soma automaticamente tudo que você lançar nesta conta <b>depois</b> dessa data. Para reconciliar com o extrato real do banco, atualize os dois campos acima para o saldo e a data de hoje.</div>
     <div class="checkline"><input type="checkbox" id="f_reserve" ${a&&a.isReserve?'checked':''}> <span>Esta conta é minha reserva de emergência</span></div>
     <div class="modal-actions">
       <button class="btn ghost" onclick="closeModal()">Cancelar</button>
@@ -2159,8 +2193,9 @@ function openAccModal(id){
 function saveAcc(id){
   const name = document.getElementById('f_name').value.trim();
   const balance = parseFloat(document.getElementById('f_balance').value);
+  const balanceDate = document.getElementById('f_balanceDate').value || todayStr();
   if(!name || isNaN(balance)){ toast('Preencha nome e saldo.'); return; }
-  const payload = { name, bank: document.getElementById('f_bank').value, type: document.getElementById('f_type').value, balance, isReserve: document.getElementById('f_reserve').checked };
+  const payload = { name, bank: document.getElementById('f_bank').value, type: document.getElementById('f_type').value, balance, balanceDate, isReserve: document.getElementById('f_reserve').checked };
   if(id){ Object.assign(data.accounts.find(x=>x.id===id), payload); }
   else{ data.accounts.push(Object.assign({id:uid()}, payload)); }
   closeModal(); renderAll(); scheduleSave(); toast('Conta salva.');
@@ -2523,7 +2558,7 @@ function renderTutorial(){
     ${tutoSection('Assinaturas, Impostos e Contas', `
       <p><b>Assinaturas</b>: cadastre gastos recorrentes (Caveo, Wellhub, seguro...) e veja o custo mensal/anual total. O botão "Lançar pagamento agora" cria o lançamento correspondente sem precisar preencher tudo de novo.</p>
       <p><b>Impostos</b>: registros por tipo de renda (PF, RPA, CLT, PJ) com valor estimado, vencimento e status — sempre como estimativa para organização pessoal, não substitui contador.</p>
-      <p><b>Contas</b>: cadastro de bancos e cartões, com saldo atual de cada um.</p>
+      <p><b>Contas</b>: cadastro de bancos e cartões. O saldo é calculado automaticamente: você define um "saldo inicial" numa data, e o app soma tudo que você lançar naquela conta a partir dali (receitas, despesas, aportes, transferências, plantões recebidos). Se o número divergir do seu banco real (por algo não lançado), abra a conta e "reconcilie": atualize o saldo inicial e a data para hoje.</p>
     `)}
 
     ${tutoSection('Categorias', `
