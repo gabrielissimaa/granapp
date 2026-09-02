@@ -908,6 +908,16 @@ function renderAnaliseFinanceira(){
    RENDER: LANÇAMENTOS
 ========================================================= */
 let lancFilter = { type:'all', purpose:'all', essential:'all', fixedVariable:'all', accountId:'all', unclassified:false };
+function shiftAsVirtualTx(sh){
+  return {
+    id: 'shift-'+sh.id, type:'receita', date: sh.actualDate||sh.date,
+    description: sh.location ? ('Plantão — '+sh.location) : 'Plantão',
+    amount: sh.netAmount||sh.grossAmount||0, category:'Plantão', source:'Plantão',
+    accountId: sh.accountId, purpose:'profissional', notes: sh.notes||'',
+    isShift:true, shiftRef: sh.id
+  };
+}
+function receivedShiftsAsTx(){ return data.shifts.filter(s=>s.status==='Recebido').map(shiftAsVirtualTx); }
 function txRowHtml(t){
   const acc = data.accounts.find(a=>a.id===t.accountId);
   const color = colorForCategory(t.category);
@@ -917,7 +927,7 @@ function txRowHtml(t){
     <div class="row" style="--accent:${t.type==='despesa'?color:typeColor}">
       <div class="date">${fmtDate(t.date)}</div>
       <div class="desc"><div class="t">${escapeHtml(t.description)}</div></div>
-      <span class="badge outline">${t.type}</span>
+      <span class="badge outline">${t.isShift ? 'plantão' : t.type}</span>
       ${t.category ? `<span class="badge" style="background:${color}26;color:${color}">${escapeHtml(t.category)}</span>` : ''}
       ${t.fixedVariable ? `<span class="badge outline">${t.fixedVariable==='fixo'?'Fixo':'Variável'}</span>` : ''}
       ${t.essential ? `<span class="badge outline">${t.essential==='essencial'?'Essencial':'Não essencial'}</span>` : ''}
@@ -925,14 +935,19 @@ function txRowHtml(t){
       <div class="acc">${acc?escapeHtml(acc.name):'—'}</div>
       <div class="amt num" style="color:${typeColor}">${sign}${fmtMoney(t.amount)}</div>
       <div class="actions">
-        <button class="iconbtn" onclick="openTxModal('${t.id}')" title="Editar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M11 4H6a2 2 0 00-2 2v12a2 2 0 002 2h12a2 2 0 002-2v-5M18.5 2.5a2.1 2.1 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
-        <button class="iconbtn" onclick="deleteEntry('transactions','${t.id}')" title="Excluir"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6 7h12M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2m2 0v13a1 1 0 01-1 1H8a1 1 0 01-1-1V7h10z"/></svg></button>
+        ${t.isShift ? `
+          <button class="iconbtn" onclick="openShiftModal('${t.shiftRef}')" title="Editar em Plantões & Trabalhos"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M11 4H6a2 2 0 00-2 2v12a2 2 0 002 2h12a2 2 0 002-2v-5M18.5 2.5a2.1 2.1 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+        ` : `
+          <button class="iconbtn" onclick="openTxModal('${t.id}')" title="Editar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M11 4H6a2 2 0 00-2 2v12a2 2 0 002 2h12a2 2 0 002-2v-5M18.5 2.5a2.1 2.1 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+          <button class="iconbtn" onclick="deleteEntry('transactions','${t.id}')" title="Excluir"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6 7h12M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2m2 0v13a1 1 0 01-1 1H8a1 1 0 01-1-1V7h10z"/></svg></button>
+        `}
       </div>
     </div>`;
 }
 function renderLancamentos(){
   const el = document.getElementById('page-lancamentos');
-  let list = [...data.transactions];
+  let list = [...data.transactions, ...receivedShiftsAsTx()];
+  const totalCount = data.transactions.length + data.shifts.filter(s=>s.status==='Recebido').length;
   if(lancFilter.type!=='all') list = list.filter(t=>t.type===lancFilter.type);
   if(lancFilter.purpose!=='all') list = list.filter(t=>t.purpose===lancFilter.purpose);
   if(lancFilter.essential!=='all') list = list.filter(t=>t.essential===lancFilter.essential);
@@ -943,7 +958,7 @@ function renderLancamentos(){
 
   el.innerHTML = `
     <div class="page-head">
-      <div><h1>Lançamentos</h1><p>${list.length} de ${data.transactions.length} lançamento(s)</p></div>
+      <div><h1>Lançamentos</h1><p>${list.length} de ${totalCount} lançamento(s) <span style="color:var(--text-muted);">(inclui plantões recebidos)</span></p></div>
       <button class="btn accent" onclick="openTxModal()">+ Novo lançamento</button>
     </div>
     <div class="filterbar">
@@ -1106,11 +1121,11 @@ function saveTx(id){
 ========================================================= */
 function renderReceitas(){
   const el = document.getElementById('page-receitas');
-  const list = [...data.transactions].filter(t=>t.type==='receita').sort((a,b)=>b.date.localeCompare(a.date));
+  const list = [...data.transactions.filter(t=>t.type==='receita'), ...receivedShiftsAsTx()].sort((a,b)=>b.date.localeCompare(a.date));
   const total = list.reduce((s,t)=>s+t.amount,0);
   el.innerHTML = `
     <div class="page-head">
-      <div><h1>Receitas</h1><p>${list.length} registro(s) · total ${fmtMoney(total)}</p></div>
+      <div><h1>Receitas</h1><p>${list.length} registro(s) · total ${fmtMoney(total)} <span style="color:var(--text-muted);">(inclui plantões recebidos)</span></p></div>
       <button class="btn accent" onclick="openTxModal(); setTimeout(()=>setTxType('receita'),0)">+ Nova receita</button>
     </div>
     <div class="ledger">
@@ -2295,7 +2310,7 @@ function renderTutorial(){
       <ul>
         <li>Registre local, tipo de trabalho, horas, valor bruto/líquido, pagador e status (Previsto, Recebido, Atrasado).</li>
         <li>O app calcula sozinho: quantidade de plantões, horas trabalhadas, receita recebida, <b>média por plantão</b> e <b>média por hora</b>, e valores pendentes.</li>
-        <li>Plantões com status "Recebido" já entram automaticamente nas receitas do Painel e do DRE — não precisa duplicar lançando de novo em Lançamentos.</li>
+        <li>Plantões com status "Recebido" já entram automaticamente como receita — aparecem no Painel, no DRE e também nas abas <b>Lançamentos</b> e <b>Receitas</b>, marcados com um selo "plantão". Não precisa duplicar lançando de novo; para editar ou excluir, faça isso aqui em Plantões (o botão de editar nessas linhas te traz direto pra cá).</li>
         <li>Quando você começar o CLT, pode registrar a remuneração aqui também, sem precisar de uma área nova.</li>
       </ul>
     `)}
