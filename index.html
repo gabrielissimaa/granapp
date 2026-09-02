@@ -2489,6 +2489,16 @@ function renderTutorial(){
       <p><b>Contas</b>: cadastro de bancos e cartões, com saldo atual de cada um.</p>
     `)}
 
+    ${tutoSection('Categorias', `
+      <p>Gerencie as categorias de despesa livremente — as cores são escolhidas automaticamente, você não precisa se preocupar com isso.</p>
+      <ul>
+        <li><b>Criar</b>: botão "+ Nova categoria", escolhendo se é Pessoal ou Profissional.</li>
+        <li><b>Editar</b>: renomear uma categoria atualiza automaticamente todos os lançamentos, assinaturas, regras e orçamentos que já usam ela — nada fica desatualizado.</li>
+        <li><b>Mesclar</b>: junta uma categoria em outra já existente (útil se você criou duas parecidas por engano). Tudo que usava a categoria antiga passa a usar a nova.</li>
+        <li><b>Excluir</b>: se a categoria já está em uso, o app pede para mesclar antes de remover — assim nenhum lançamento fica "órfão".</li>
+      </ul>
+    `)}
+
     ${tutoSection('Importar extrato', `
       <p>Aceita arquivos <b>CSV</b>, <b>Excel (.xlsx)</b> ou <b>PDF</b> do seu banco.</p>
       <ul>
