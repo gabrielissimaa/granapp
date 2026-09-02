@@ -1467,6 +1467,7 @@ function investCardHtml(inv,i){
       <div class="v num">${fmtMoney(inv.currentValue)}</div>
       <div class="t">${escapeHtml(inv.name)}</div>
       <div class="meta num ${diff>=0?'pos':'neg'}">${diff>=0?'+':''}${fmtMoney(diff)} (${pct.toFixed(1)}%)</div>
+      <button class="btn ghost sm" style="margin-top:10px;position:relative;" onclick="openAporteModal('${inv.id}')">+ Novo aporte</button>
     </div>`;
 }
 function renderInvestimentos(){
@@ -1537,6 +1538,42 @@ function saveInv(id){
   if(id){ Object.assign(data.investments.find(x=>x.id===id), payload); }
   else{ data.investments.push(Object.assign({id:uid()}, payload)); }
   closeModal(); renderAll(); scheduleSave(); toast('Investimento salvo.');
+}
+function openAporteModal(investmentId){
+  const inv = data.investments.find(x=>x.id===investmentId);
+  openModalWith(`
+    <h3>Novo aporte — ${escapeHtml(inv.name)}</h3>
+    <div class="infobox" style="margin-bottom:14px;">O valor entra automaticamente como lançamento em <b>Investimentos</b> (não conta como despesa) e atualiza o valor aportado e o valor atual deste investimento.</div>
+    <div class="field-row">
+      <div class="field"><label>Valor do aporte (R$)</label><input id="f_aporteValor" type="number" step="0.01" placeholder="0,00"></div>
+      <div class="field"><label>Data</label><input id="f_aporteData" type="date" value="${todayStr()}"></div>
+    </div>
+    <div class="field"><label>Conta de origem</label><select id="f_aporteAcc"><option value="">—</option>${accountOptions(null)}</select></div>
+    <div class="field"><label>Observações</label><input id="f_aporteNotes" placeholder="opcional"></div>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal()">Cancelar</button>
+      <button class="btn accent" onclick="confirmAporte('${investmentId}')">Confirmar aporte</button>
+    </div>
+  `);
+}
+function confirmAporte(investmentId){
+  const inv = data.investments.find(x=>x.id===investmentId);
+  const valor = parseFloat(document.getElementById('f_aporteValor').value);
+  const date = document.getElementById('f_aporteData').value;
+  if(isNaN(valor) || valor<=0 || !date){ toast('Preencha um valor válido e a data.'); return; }
+  const accountId = document.getElementById('f_aporteAcc').value;
+  const notes = document.getElementById('f_aporteNotes').value.trim();
+
+  inv.amountInvested = (inv.amountInvested||0) + valor;
+  inv.currentValue = (inv.currentValue||0) + valor;
+
+  data.transactions.push({
+    id: uid(), type:'investimento', description: `Aporte — ${inv.name}`, amount: valor, date,
+    linkedInvestmentId: inv.id, accountId, notes
+  });
+
+  closeModal(); renderAll(); scheduleSave();
+  toast('Aporte registrado: investimento atualizado e lançamento criado.');
 }
 
 /* =========================================================
