@@ -355,7 +355,7 @@ const CATEGORIES_PESSOAL = ['Moradia','Alimentação','Transporte','Saúde','Ter
 const CATEGORIES_PROFISSIONAL = ['Transporte para trabalho','Alimentação em plantão','Cursos','Congressos','Material profissional','CRM','PJ','Contabilidade','Caveo','Outros profissionais'];
 const CATEGORIES_EXP = [...CATEGORIES_PESSOAL, ...CATEGORIES_PROFISSIONAL];
 const RECEITA_SOURCES = ['Pensão','Plantão','RPA','CLT','PJ','Consultório','Outros'];
-const ACCOUNT_BANKS = ['Inter','Itaú','Santander','Banco do Brasil','Outro'];
+const ACCOUNT_BANKS = ['Inter','Itaú','Santander','Banco do Brasil','Nubank','Caixa','Bradesco','C6 Bank','BTG Pactual'];
 const ACCOUNT_TYPES = ['Conta corrente','Poupança','Cartão de crédito','Carteira/Dinheiro','Investimento'];
 const INVEST_TYPES = ['Tesouro Direto','CDB','LCI/LCA','Fundos','Ações','ETFs','FIIs','Previdência','Outros'];
 const INVEST_OBJECTIVES = ['Reserva de emergência','Residência médica','Aposentadoria','Outros'];
@@ -657,6 +657,25 @@ function applyRules(description){
     if(hit) return r;
   }
   return null;
+}
+/* Aplica as regras a lançamentos já existentes que ainda não foram classificados manualmente
+   (inclui os que vieram de importação de extrato com categoria "A classificar").
+   Nunca sobrescreve uma categoria que a pessoa já escolheu de propósito. */
+function applyRulesToExisting(){
+  let count = 0;
+  data.transactions.forEach(t=>{
+    if(t.type!=='despesa') return;
+    if(t.category && t.category!=='A classificar') return;
+    const rule = applyRules(t.description);
+    if(rule){
+      t.category = rule.category;
+      t.fixedVariable = rule.fixedVariable;
+      t.essential = rule.essential;
+      t.purpose = rule.purpose;
+      count++;
+    }
+  });
+  return count;
 }
 
 /* =========================================================
@@ -1808,8 +1827,11 @@ function renderRegras(){
   const list = [...data.rules].sort((a,b)=>(a.priority??99)-(b.priority??99));
   el.innerHTML = `
     <div class="page-head">
-      <div><h1>Regras de categorização</h1><p>Aplicadas automaticamente ao digitar a descrição de um lançamento (e na importação de extrato)</p></div>
-      <button class="btn accent" onclick="openRuleModal()">+ Nova regra</button>
+      <div><h1>Regras de categorização</h1><p>Aplicadas a todos os lançamentos (manuais e importados) — automaticamente, ao digitar a descrição ou ao criar/editar uma regra</p></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn ghost" onclick="runApplyRulesManually()">Reclassificar pendentes agora</button>
+        <button class="btn accent" onclick="openRuleModal()">+ Nova regra</button>
+      </div>
     </div>
     <div class="panel" style="overflow-x:auto;">
       <table class="datatable">
@@ -1875,6 +1897,23 @@ function saveRule(id){
   else{ data.rules.push(Object.assign({id:uid()}, payload)); }
   closeModal(); renderAll(); scheduleSave(); toast('Regra salva.');
 }
+function runApplyRulesManually(){
+  let count=0;
+  data.transactions.forEach(t=>{
+    if(t.type==='despesa' && (!t.category || t.category==='A classificar')){
+      const rule = applyRules(t.description);
+      if(rule){
+        t.category = rule.category;
+        t.fixedVariable = rule.fixedVariable;
+        t.essential = rule.essential;
+        t.purpose = rule.purpose;
+        count++;
+      }
+    }
+  });
+  renderAll(); scheduleSave();
+  toast(count>0 ? `${count} lançamento(s) reclassificado(s) pelas regras.` : 'Nenhum lançamento pendente ("a classificar") encontrado.');
+}
 
 /* =========================================================
    RENDER: CONTAS
@@ -1910,7 +1949,7 @@ function openAccModal(id){
       <datalist id="bankPresets">${ACCOUNT_BANKS.map(b=>`<option value="${b}">`).join('')}</datalist>
     </div>
     <div class="field-row">
-      <div class="field"><label>Banco</label><select id="f_bank">${ACCOUNT_BANKS.map(b=>`<option ${a&&a.bank===b?'selected':''}>${b}</option>`).join('')}</select></div>
+      <div class="field"><label>Banco</label><input id="f_bank" value="${a?escapeHtml(a.bank||''):''}" placeholder="Ex: Inter, Nubank, C6 Bank..." list="bankPresets"></div>
       <div class="field"><label>Tipo</label><select id="f_type">${ACCOUNT_TYPES.map(t=>`<option ${a&&a.type===t?'selected':''}>${t}</option>`).join('')}</select></div>
     </div>
     <div class="field"><label>Saldo atual (R$)</label><input id="f_balance" type="number" step="0.01" value="${a?a.balance:''}" placeholder="0,00"></div>
@@ -1938,11 +1977,11 @@ let importState = { rows: [], accountId: null, sheetLoaded:false };
 function renderImportar(){
   const el = document.getElementById('page-importar');
   el.innerHTML = `
-    <div class="page-head"><div><h1>Importar extrato</h1><p>CSV, Excel (.xlsx) ou PDF — nada é lançado sem sua confirmação</p></div></div>
+    <div class="page-head"><div><h1>Importar extrato</h1><p>CSV, Excel (.xlsx), OFX ou PDF — nada é lançado sem sua confirmação</p></div></div>
     <div class="panel" style="margin-bottom:20px;">
       <div class="field-row">
         <div class="field"><label>Conta de destino</label><select id="imp_acc"><option value="">Selecione...</option>${accountOptions(null)}</select></div>
-        <div class="field"><label>Arquivo (.csv, .xlsx ou .pdf)</label><input id="imp_file" type="file" accept=".csv,.xlsx,.xls,.pdf"></div>
+        <div class="field"><label>Arquivo (.csv, .xlsx, .ofx ou .pdf)</label><input id="imp_file" type="file" accept=".csv,.xlsx,.xls,.ofx,.pdf"></div>
       </div>
       <div class="infobox" style="margin-top:4px;">Leitura de PDF é experimental: funciona melhor quando o extrato tem uma linha por lançamento (data, descrição e valor). Sempre revise os valores na prévia antes de confirmar — se o app não reconhecer bem, tente exportar CSV ou Excel direto no site/app do banco.</div>
       <div id="imp_status" style="font-size:12.5px;color:var(--text-muted);margin-top:10px;"></div>
@@ -2015,6 +2054,22 @@ function extractPDFRowsFromLines(lines){
   });
   return { rows, matched, total };
 }
+function parseOFXText(text){
+  const rows = [['Data','Descrição','Valor']];
+  const blocks = text.split(/<STMTTRN>/i).slice(1);
+  blocks.forEach(block=>{
+    const end = block.search(/<\/STMTTRN>/i);
+    const chunk = end>=0 ? block.slice(0,end) : block;
+    const dateM = chunk.match(/<DTPOSTED>\s*(\d{8})/i);
+    const amtM = chunk.match(/<TRNAMT>\s*(-?\d+(?:\.\d+)?)/i);
+    const memoM = chunk.match(/<MEMO>\s*([^\r\n<]+)/i) || chunk.match(/<NAME>\s*([^\r\n<]+)/i);
+    if(!dateM || !amtM) return;
+    const y = dateM[1].slice(0,4), mo = dateM[1].slice(4,6), d = dateM[1].slice(6,8);
+    const desc = memoM ? memoM[1].trim() : 'Lançamento';
+    rows.push([`${y}-${mo}-${d}`, desc, amtM[1]]);
+  });
+  return rows;
+}
 function parseCSVText(text){
   const rows = [];
   const lines = text.split(/\r?\n/).filter(l=>l.trim().length);
@@ -2060,6 +2115,10 @@ async function handleImportFile(e){
     if(name.endsWith('.csv')){
       const text = await file.text();
       table = parseCSVText(text);
+    } else if(name.endsWith('.ofx')){
+      const text = await file.text();
+      table = parseOFXText(text);
+      if(table.length<2){ statusEl.textContent='Não encontrei lançamentos (<STMTTRN>) neste arquivo OFX. Confira se é mesmo um extrato OFX válido exportado pelo banco.'; return; }
     } else if(name.endsWith('.pdf')){
       statusEl.textContent = 'Lendo PDF (pode levar alguns segundos)...';
       const lines = await extractPDFLines(file);
@@ -2121,7 +2180,7 @@ function buildPreview(){
     if(debitCol>=0){ const deb = parseAmount(r[debitCol]); if(!isNaN(deb) && deb!==0) amount = -Math.abs(deb); }
     if(!date || !description || isNaN(amount) || amount===0) continue;
     const type = amount>0 ? 'receita' : 'despesa';
-    const rule = applyRules(description);
+    const rule = (type==='despesa') ? applyRules(description) : null;
     const dup = data.transactions.some(t=> t.date===date && Math.abs(t.amount-Math.abs(amount))<0.01 && t.description.toLowerCase()===description.toLowerCase());
     rows.push({
       id: uid(), date, description, amount: Math.abs(amount), type,
