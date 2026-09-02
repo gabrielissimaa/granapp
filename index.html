@@ -318,6 +318,7 @@
     <div class="page" id="page-assinaturas"></div>
     <div class="page" id="page-impostos"></div>
     <div class="page" id="page-regras"></div>
+    <div class="page" id="page-categorias"></div>
     <div class="page" id="page-contas"></div>
     <div class="page" id="page-importar"></div>
     <div class="page" id="page-tutorial"></div>
@@ -343,6 +344,7 @@ let data = {
   taxes: [],
   netWorthSnapshots: [],
   budgetOverrides: {},
+  categories: [],      // {id, name, group: 'pessoal'|'profissional'} — editável pelo usuário
   settings: { emergencyMonths: 6 }
 };
 let loaded = false;
@@ -351,9 +353,22 @@ let loaded = false;
 /* =========================================================
    TAXONOMIA
 ========================================================= */
-const CATEGORIES_PESSOAL = ['Moradia','Alimentação','Transporte','Saúde','Farmácia','Remédio','Beleza','Terapia','Lazer','Viagens','Compras','Educação','Assinaturas','Seguros','Outros'];
-const CATEGORIES_PROFISSIONAL = ['Transporte para trabalho','Alimentação em plantão','Cursos','Congressos','Material profissional','CRM','PJ','Contabilidade','Caveo','Outros profissionais'];
-const CATEGORIES_EXP = [...CATEGORIES_PESSOAL, ...CATEGORIES_PROFISSIONAL];
+const DEFAULT_CATEGORIES_PESSOAL = ['Moradia','Alimentação','Transporte','Saúde','Farmácia','Remédio','Beleza','Terapia','Lazer','Viagens','Compras','Educação','Assinaturas','Seguros','Outros'];
+const DEFAULT_CATEGORIES_PROFISSIONAL = ['Transporte para trabalho','Alimentação em plantão','Cursos','Congressos','Material profissional','CRM','PJ','Contabilidade','Caveo','Outros profissionais'];
+function ensureCategoriesSeeded(){
+  if(!data.categories || !data.categories.length){
+    data.categories = [
+      ...DEFAULT_CATEGORIES_PESSOAL.map(name=>({id:uid(), name, group:'pessoal'})),
+      ...DEFAULT_CATEGORIES_PROFISSIONAL.map(name=>({id:uid(), name, group:'profissional'})),
+    ];
+  }
+}
+function categoryNames(group){
+  if(!data.categories) return [];
+  if(group==='all') return data.categories.map(c=>c.name);
+  return data.categories.filter(c=>c.group===group).map(c=>c.name);
+}
+function allCategoryNames(){ return categoryNames('all'); }
 const RECEITA_SOURCES = ['Pensão','Plantão','RPA','CLT','PJ','Consultório','Outros'];
 const ACCOUNT_BANKS = ['Inter','Itaú','Santander','Banco do Brasil','Nubank','Caixa','Bradesco','C6 Bank','BTG Pactual'];
 const ACCOUNT_TYPES = ['Conta corrente','Poupança','Cartão de crédito','Carteira/Dinheiro','Investimento'];
@@ -374,7 +389,7 @@ const PALETTE = ['#00E6A0','#4DD9FF','#8B6CFF','#FF5C7A','#FFB84D','#FF5CC8','#5
 function colorForCategory(cat){ return CATEGORY_COLORS[cat] || colorForString(cat||''); }
 function colorForString(s){ let h=0; for(let i=0;i<s.length;i++){ h=(h*31+s.charCodeAt(i))>>>0; } return PALETTE[h % PALETTE.length]; }
 function colorForIndex(i){ return PALETTE[((i%PALETTE.length)+PALETTE.length)%PALETTE.length]; }
-function purposeDefaultForCategory(cat){ return CATEGORIES_PROFISSIONAL.includes(cat) ? 'profissional' : 'pessoal'; }
+function purposeDefaultForCategory(cat){ const c = data.categories && data.categories.find(x=>x.name===cat); return c ? c.group : 'pessoal'; }
 
 /* =========================================================
    NAVEGAÇÃO
@@ -401,6 +416,7 @@ const NAV_GROUPS = [
     {id:'assinaturas', label:'Assinaturas', icon:'M17 8a5 5 0 00-10 0v3H5l1.5 10h11L19 11h-2V8z'},
     {id:'impostos', label:'Impostos', icon:'M9 12h6m-6 4h6M7 4h10a2 2 0 012 2v13l-3-2-2 2-2-2-2 2-2-2-3 2V6a2 2 0 012-2z'},
     {id:'regras', label:'Regras', icon:'M4 6h16M7 12h10M10 18h4'},
+    {id:'categorias', label:'Categorias', icon:'M7 7h.01M3 5a2 2 0 012-2h6.586a1 1 0 01.707.293l8 8a1 1 0 010 1.414l-8.586 8.586a1 1 0 01-1.414 0l-8-8A1 1 0 013 12.586V5z'},
     {id:'importar', label:'Importar extrato', icon:'M12 3v12m0 0l-4-4m4 4l4-4M4 19h16'},
   ]},
   {label:'AJUDA', items:[
@@ -534,6 +550,7 @@ async function loadData(){
       data = Object.assign(structuredCloneSafe(data), cached.data);
     }
   }catch(e){}
+  ensureCategoriesSeeded();
   loaded = true;
   renderAll();
   setSync(navigator.onLine ? 'warn' : 'bad');
@@ -546,6 +563,7 @@ async function loadData(){
         const remoteUpdatedAt = new Date(row.updated_at).getTime();
         if(remoteUpdatedAt >= localUpdatedAt){
           data = Object.assign(structuredCloneSafe(data), row.data);
+          ensureCategoriesSeeded();
           await idbSet('app-data', {data, updatedAt: remoteUpdatedAt});
           renderAll();
         }
@@ -1025,7 +1043,7 @@ function renderTxExtraFields(t){
   const box = document.getElementById('txExtraFields');
   if(txTypeState==='despesa'){
     box.innerHTML = `
-      <div class="field"><label>Categoria</label><select id="f_cat">${CATEGORIES_EXP.map(c=>`<option ${t&&t.category===c?'selected':''}>${c}</option>`).join('')}</select></div>
+      <div class="field"><label>Categoria</label><select id="f_cat">${allCategoryNames().map(c=>`<option ${t&&t.category===c?'selected':''}>${c}</option>`).join('')}</select></div>
       <div class="field-row">
         <div class="field"><label>Natureza</label><select id="f_fixed"><option value="fixo" ${t&&t.fixedVariable==='fixo'?'selected':''}>Fixo</option><option value="variavel" ${!t||t.fixedVariable==='variavel'?'selected':''}>Variável</option></select></div>
         <div class="field"><label>Necessidade</label><select id="f_essential"><option value="essencial" ${t&&t.essential==='essencial'?'selected':''}>Essencial</option><option value="nao-essencial" ${!t||t.essential==='nao-essencial'?'selected':''}>Não essencial</option></select></div>
@@ -1250,7 +1268,7 @@ function renderOrcamento(){
   const curRange = rangeForPeriod('mes-atual');
   const months3 = lastNMonthKeys(3);
 
-  const rows = CATEGORIES_EXP.map(cat=>{
+  const rows = allCategoryNames().map(cat=>{
     const monthVals = months3.map(m=>{
       const r = rangeForPeriod('custom', m.key+'-01', new Date(m.year,m.month+1,0).toISOString().slice(0,10));
       return data.transactions.filter(t=>t.type==='despesa' && t.category===cat && inRange(t.date,r)).reduce((s,t)=>s+t.amount,0);
@@ -1719,7 +1737,7 @@ function openSubModal(id){
     <h3>${s?'Editar assinatura':'Nova assinatura'}</h3>
     <div class="field"><label>Nome</label><input id="f_sname" value="${s?escapeHtml(s.name):''}" placeholder="Ex: Caveo, Wellhub"></div>
     <div class="field-row">
-      <div class="field"><label>Categoria</label><select id="f_scat">${CATEGORIES_EXP.map(c=>`<option ${s&&s.category===c?'selected':''}>${c}</option>`).join('')}</select></div>
+      <div class="field"><label>Categoria</label><select id="f_scat">${allCategoryNames().map(c=>`<option ${s&&s.category===c?'selected':''}>${c}</option>`).join('')}</select></div>
       <div class="field"><label>Valor (R$)</label><input id="f_samount" type="number" step="0.01" value="${s?s.amount:''}"></div>
     </div>
     <div class="field-row">
@@ -1879,7 +1897,7 @@ function openRuleModal(id){
       <div class="field"><label>Tipo de correspondência</label><select id="f_rmatch"><option value="contains" ${!r||r.matchType==='contains'?'selected':''}>Contém</option><option value="equals" ${r&&r.matchType==='equals'?'selected':''}>É igual a</option><option value="startsWith" ${r&&r.matchType==='startsWith'?'selected':''}>Começa com</option></select></div>
       <div class="field"><label>Texto</label><input id="f_rtext" value="${r?escapeHtml(r.matchText):''}" placeholder="Ex: uber"></div>
     </div>
-    <div class="field"><label>Categoria</label><select id="f_rcat">${CATEGORIES_EXP.map(c=>`<option ${r&&r.category===c?'selected':''}>${c}</option>`).join('')}</select></div>
+    <div class="field"><label>Categoria</label><select id="f_rcat">${allCategoryNames().map(c=>`<option ${r&&r.category===c?'selected':''}>${c}</option>`).join('')}</select></div>
     <div class="field-row">
       <div class="field"><label>Natureza</label><select id="f_rfixed"><option value="fixo" ${r&&r.fixedVariable==='fixo'?'selected':''}>Fixo</option><option value="variavel" ${!r||r.fixedVariable==='variavel'?'selected':''}>Variável</option></select></div>
       <div class="field"><label>Necessidade</label><select id="f_ress"><option value="essencial" ${r&&r.essential==='essencial'?'selected':''}>Essencial</option><option value="nao-essencial" ${!r||r.essential==='nao-essencial'?'selected':''}>Não essencial</option></select></div>
@@ -1928,6 +1946,132 @@ function runApplyRulesManually(){
   });
   renderAll(); scheduleSave();
   toast(count>0 ? `${count} lançamento(s) reclassificado(s) pelas regras.` : 'Nenhum lançamento pendente ("a classificar") encontrado.');
+}
+
+/* =========================================================
+   RENDER: CATEGORIAS
+========================================================= */
+function usageCountForCategory(name){
+  let n = 0;
+  n += data.transactions.filter(t=>t.category===name).length;
+  n += data.subscriptions.filter(s=>s.category===name).length;
+  n += data.rules.filter(r=>r.category===name).length;
+  return n;
+}
+function reassignCategory(oldName, newName){
+  data.transactions.forEach(t=>{ if(t.category===oldName) t.category=newName; });
+  data.subscriptions.forEach(s=>{ if(s.category===oldName) s.category=newName; });
+  data.rules.forEach(r=>{ if(r.category===oldName) r.category=newName; });
+  if(data.budgetOverrides && Object.prototype.hasOwnProperty.call(data.budgetOverrides, oldName)){
+    data.budgetOverrides[newName] = data.budgetOverrides[oldName];
+    delete data.budgetOverrides[oldName];
+  }
+}
+function categoryRowHtml(c){
+  const color = colorForCategory(c.name);
+  const count = usageCountForCategory(c.name);
+  return `
+    <div class="row" style="--accent:${color}">
+      <span class="badge" style="background:${color}26;color:${color};flex-shrink:0;">${escapeHtml(c.name)}</span>
+      <div class="desc"><div class="t" style="font-weight:400;color:var(--text-muted);font-size:12px;">${count} lançamento/regra usando esta categoria</div></div>
+      <div class="actions" style="opacity:1;">
+        <button class="iconbtn" onclick="openMergeCategoryModal('${c.id}')" title="Mesclar em outra categoria"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3L4 7l4 4M4 7h11a4 4 0 014 4v1M16 21l4-4-4-4M20 17H9a4 4 0 01-4-4v-1"/></svg></button>
+        <button class="iconbtn" onclick="openCategoryModal('${c.id}')" title="Editar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M11 4H6a2 2 0 00-2 2v12a2 2 0 002 2h12a2 2 0 002-2v-5M18.5 2.5a2.1 2.1 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+        <button class="iconbtn" onclick="deleteCategoryFlow('${c.id}')" title="Excluir"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6 7h12M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2m2 0v13a1 1 0 01-1 1H8a1 1 0 01-1-1V7h10z"/></svg></button>
+      </div>
+    </div>`;
+}
+function renderCategorias(){
+  const el = document.getElementById('page-categorias');
+  const pessoal = data.categories.filter(c=>c.group==='pessoal');
+  const prof = data.categories.filter(c=>c.group==='profissional');
+  el.innerHTML = `
+    <div class="page-head">
+      <div><h1>Categorias</h1><p>Crie, edite, mescle ou exclua — as cores são geradas automaticamente</p></div>
+      <button class="btn accent" onclick="openCategoryModal()">+ Nova categoria</button>
+    </div>
+    <section class="block">
+      <div class="block-head"><h3>Pessoal</h3></div>
+      <div class="ledger">${pessoal.length ? pessoal.map(categoryRowHtml).join('') : '<div class="empty">Nenhuma categoria pessoal ainda.</div>'}</div>
+    </section>
+    <section class="block">
+      <div class="block-head"><h3>Profissional</h3></div>
+      <div class="ledger">${prof.length ? prof.map(categoryRowHtml).join('') : '<div class="empty">Nenhuma categoria profissional ainda.</div>'}</div>
+    </section>
+  `;
+}
+function openCategoryModal(id){
+  const c = id ? data.categories.find(x=>x.id===id) : null;
+  openModalWith(`
+    <h3>${c?'Editar categoria':'Nova categoria'}</h3>
+    <div class="field"><label>Nome</label><input id="f_catname" value="${c?escapeHtml(c.name):''}" placeholder="Ex: Pet, Presentes..."></div>
+    <div class="field"><label>Grupo</label><select id="f_catgroup">
+      <option value="pessoal" ${!c||c.group==='pessoal'?'selected':''}>Pessoal</option>
+      <option value="profissional" ${c&&c.group==='profissional'?'selected':''}>Profissional</option>
+    </select></div>
+    ${c ? `<div class="infobox">Renomear atualiza automaticamente todos os lançamentos, assinaturas, regras e orçamentos que já usam "${escapeHtml(c.name)}".</div>` : ''}
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal()">Cancelar</button>
+      <button class="btn accent" onclick="saveCategory('${c?c.id:''}')">Salvar</button>
+    </div>
+  `);
+}
+function saveCategory(id){
+  const name = document.getElementById('f_catname').value.trim();
+  const group = document.getElementById('f_catgroup').value;
+  if(!name){ toast('Digite um nome para a categoria.'); return; }
+  const dup = data.categories.find(x=> x.name.toLowerCase()===name.toLowerCase() && x.id!==id);
+  if(dup){ toast('Já existe uma categoria com esse nome.'); return; }
+  if(id){
+    const c = data.categories.find(x=>x.id===id);
+    const oldName = c.name;
+    c.name = name; c.group = group;
+    if(oldName!==name) reassignCategory(oldName, name);
+  } else {
+    data.categories.push({id:uid(), name, group});
+  }
+  closeModal(); renderAll(); scheduleSave(); toast('Categoria salva.');
+}
+function openMergeCategoryModal(id){
+  const c = data.categories.find(x=>x.id===id);
+  const others = data.categories.filter(x=>x.id!==id);
+  if(others.length===0){
+    openModalWith(`<h3>Mesclar "${escapeHtml(c.name)}"</h3><div class="infobox">Não há outra categoria para mesclar — crie outra categoria primeiro.</div><div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fechar</button></div>`);
+    return;
+  }
+  const count = usageCountForCategory(c.name);
+  openModalWith(`
+    <h3>Mesclar "${escapeHtml(c.name)}"</h3>
+    <p style="color:var(--text-muted);font-size:13px;margin-bottom:14px;">${count>0?`${count} registro(s) que usam "${escapeHtml(c.name)}" passam a usar a categoria escolhida.`:'Esta categoria ainda não está em uso.'} Depois, "${escapeHtml(c.name)}" é removida da lista.</p>
+    <div class="field"><label>Mesclar em</label><select id="f_mergeTarget">${others.map(o=>`<option value="${o.id}">${escapeHtml(o.name)}</option>`).join('')}</select></div>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal()">Cancelar</button>
+      <button class="btn accent" onclick="confirmMergeCategory('${id}')">Mesclar</button>
+    </div>
+  `);
+}
+function confirmMergeCategory(id){
+  const c = data.categories.find(x=>x.id===id);
+  const targetId = document.getElementById('f_mergeTarget').value;
+  const target = data.categories.find(x=>x.id===targetId);
+  if(!target){ toast('Escolha uma categoria de destino.'); return; }
+  reassignCategory(c.name, target.name);
+  data.categories = data.categories.filter(x=>x.id!==id);
+  if(data.budgetOverrides) delete data.budgetOverrides[c.name];
+  closeModal(); renderAll(); scheduleSave(); toast(`"${c.name}" mesclada em "${target.name}".`);
+}
+function deleteCategoryFlow(id){
+  const c = data.categories.find(x=>x.id===id);
+  const count = usageCountForCategory(c.name);
+  if(count>0){
+    openMergeCategoryModal(id);
+    toast('Essa categoria está em uso — escolha para onde mesclar antes de remover.');
+    return;
+  }
+  if(data.categories.length<=1){ toast('Deixe pelo menos uma categoria.'); return; }
+  data.categories = data.categories.filter(x=>x.id!==id);
+  if(data.budgetOverrides) delete data.budgetOverrides[c.name];
+  renderAll(); scheduleSave(); toast('Categoria excluída.');
 }
 
 /* =========================================================
@@ -2397,6 +2541,7 @@ function renderAll(){
   renderAssinaturas();
   renderImpostos();
   renderRegras();
+  renderCategorias();
   renderContas();
   renderImportar();
   renderTutorial();
