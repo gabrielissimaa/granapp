@@ -1266,12 +1266,14 @@ function shiftCardRow(sh){
   const color = sh.status==='Recebido' ? 'var(--mint)' : sh.status==='Atrasado' ? 'var(--coral)' : 'var(--amber)';
   const acc = data.accounts.find(a=>a.id===sh.accountId);
   const ct = sh.contractType || 'Plantão';
+  const goal = sh.goalId ? data.goals.find(g=>g.id===sh.goalId) : null;
   return `
     <div class="row" style="--accent:${color}">
       <div class="date">${fmtDate(sh.date)}</div>
       <div class="desc"><div class="t">${escapeHtml(sh.location||'—')}</div></div>
       <span class="badge outline">${escapeHtml(ct)}</span>
       ${sh.hours?`<span class="badge outline">${sh.hours}h</span>`:''}
+      ${goal?`<span class="badge" style="background:var(--violet)26;color:var(--violet)">🎯 ${escapeHtml(goal.name)}</span>`:''}
       <span class="badge" style="background:${color}26;color:${color}">${sh.status}</span>
       <div class="acc">${acc?escapeHtml(acc.name):'—'}</div>
       <div class="amt num pos">${fmtMoney(sh.netAmount||sh.grossAmount||0)}</div>
@@ -1362,6 +1364,9 @@ function openShiftModal(id, prefillDate){
       <div class="field"><label>Data efetiva de pgto</label><input id="f_actual" type="date" value="${s&&s.actualDate?s.actualDate:''}"></div>
     </div>
     <div class="field"><label>Conta</label><select id="f_acc"><option value="">—</option>${accountOptions(s?s.accountId:null)}</select></div>
+    ${data.goals.filter(g=>g.type==='plantoes').length ? `
+    <div class="field"><label>Meta vinculada (opcional)</label><select id="f_goalId"><option value="">Nenhuma</option>${data.goals.filter(g=>g.type==='plantoes').map(g=>`<option value="${g.id}" ${s&&s.goalId===g.id?'selected':''}>${escapeHtml(g.name)}</option>`).join('')}</select></div>
+    ` : ''}
     <div class="field"><label>Observações</label><input id="f_notes" value="${s?escapeHtml(s.notes||''):''}"></div>
     <div class="modal-actions">
       <button class="btn ghost" onclick="closeModal()">Cancelar</button>
@@ -1386,6 +1391,7 @@ function saveShift(id){
     actualDate: document.getElementById('f_actual').value||null,
     status: document.getElementById('f_status').value,
     accountId: document.getElementById('f_acc').value,
+    goalId: document.getElementById('f_goalId') ? (document.getElementById('f_goalId').value || null) : null,
     notes: document.getElementById('f_notes').value.trim(),
   };
   if(id){ Object.assign(data.shifts.find(x=>x.id===id), payload); }
@@ -1922,11 +1928,25 @@ function registerSnapshot(){
 function goalMonthlyContributed(g, monthKeyStr){
   return (g.contributions||[]).filter(c=>monthKey(c.date)===monthKeyStr).reduce((s,c)=>s+c.amount,0);
 }
+function shiftsLinkedToGoal(goalId){ return data.shifts.filter(sh=>sh.goalId===goalId); }
 function goalCardHtml(g,i){
   const color = colorForIndex(i+2);
-  const pct = g.target>0 ? Math.min(100,(g.current/g.target)*100) : 0;
+  const isPlantoes = g.type==='plantoes';
+  let current = g.current, target = g.target, pct;
+  let countInfo = '';
+  if(isPlantoes){
+    const linked = shiftsLinkedToGoal(g.id);
+    const recebidos = linked.filter(sh=>sh.status==='Recebido');
+    const previstos = linked.filter(sh=>sh.status!=='Recebido');
+    current = recebidos.reduce((s,sh)=>s+(sh.netAmount||sh.grossAmount||0),0);
+    target = (g.targetCount||0) * (g.valuePerShift||0);
+    pct = g.targetCount>0 ? Math.min(100,(recebidos.length/g.targetCount)*100) : 0;
+    countInfo = `<div class="t num">${recebidos.length} de ${g.targetCount} plantões${previstos.length?` · +${previstos.length} já marcado(s)`:''}</div>`;
+  } else {
+    pct = g.target>0 ? Math.min(100,(g.current/g.target)*100) : 0;
+  }
   let monthlyNeeded = null;
-  if(g.deadline){
+  if(g.deadline && !isPlantoes){
     const months = Math.max(1, Math.ceil((new Date(g.deadline)-new Date())/(1000*60*60*24*30)));
     monthlyNeeded = Math.max(0,(g.target-g.current))/months;
   }
@@ -1944,16 +1964,21 @@ function goalCardHtml(g,i){
         <button class="iconbtn" onclick="openGoalModal('${g.id}')" title="Editar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M11 4H6a2 2 0 00-2 2v12a2 2 0 002 2h12a2 2 0 002-2v-5M18.5 2.5a2.1 2.1 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
         <button class="iconbtn" onclick="deleteEntry('goals','${g.id}')" title="Excluir"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6 7h12M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2m2 0v13a1 1 0 01-1 1H8a1 1 0 01-1-1V7h10z"/></svg></button>
       </div>
-      <div class="k">${g.deadline?('até '+fmtDate(g.deadline)):'meta'}</div>
+      <div class="k">${g.deadline?('até '+fmtDate(g.deadline)):'meta'}${isPlantoes?' · plantões':''}</div>
       <div class="v">${escapeHtml(g.name)}</div>
-      <div class="t num">${fmtMoney(g.current)} de ${fmtMoney(g.target)}</div>
+      ${isPlantoes ? countInfo : `<div class="t num">${fmtMoney(g.current)} de ${fmtMoney(g.target)}</div>`}
       <div class="progress-bar"><div style="width:${pct}%"></div></div>
-      <div class="meta">${pct.toFixed(0)}% concluído${plano?` · plano: ${fmtMoney(plano)}/mês`:''}</div>
-      ${plano ? `<div class="meta" style="color:${contribMes>=plano?'var(--mint)':'var(--amber)'}">Este mês: ${fmtMoney(contribMes)} de ${fmtMoney(plano)}</div>` : ''}
-      <div class="chart-bars" style="height:32px;margin-top:10px;justify-content:flex-start;gap:4px;">
-        ${evoVals.map(v=>`<div class="bar in" style="height:${Math.max(2,(v/evoMax)*30)}px;width:8px;background:${color}" title="${fmtMoney(v)}"></div>`).join('')}
-      </div>
-      <button class="btn ghost sm" style="margin-top:10px;position:relative;" onclick="openGoalAporteModal('${g.id}')">+ Registrar aporte</button>
+      <div class="meta">${pct.toFixed(0)}% concluído${isPlantoes?` · ${fmtMoney(current)} recebidos de ${fmtMoney(target)}`:(plano?` · plano: ${fmtMoney(plano)}/mês`:'')}</div>
+      ${!isPlantoes && plano ? `<div class="meta" style="color:${contribMes>=plano?'var(--mint)':'var(--amber)'}">Este mês: ${fmtMoney(contribMes)} de ${fmtMoney(plano)}</div>` : ''}
+      ${!isPlantoes ? `
+        <div class="chart-bars" style="height:32px;margin-top:10px;justify-content:flex-start;gap:4px;">
+          ${evoVals.map(v=>`<div class="bar in" style="height:${Math.max(2,(v/evoMax)*30)}px;width:8px;background:${color}" title="${fmtMoney(v)}"></div>`).join('')}
+        </div>
+        <button class="btn ghost sm" style="margin-top:10px;position:relative;" onclick="openGoalAporteModal('${g.id}')">+ Registrar aporte</button>
+      ` : `
+        <div class="meta" style="margin-top:6px;">Marque "esta meta" no formulário do plantão para contar aqui.</div>
+        <button class="btn ghost sm" style="margin-top:8px;position:relative;" onclick="showPage('trabalhos')">Ver plantões</button>
+      `}
     </div>`;
 }
 function renderMetas(){
@@ -1966,22 +1991,44 @@ function renderMetas(){
     <div class="cards">${data.goals.length ? data.goals.map((g,i)=>goalCardHtml(g,i)).join('') : '<div class="empty">Nenhuma meta cadastrada. Que tal começar com "Reserva para residência médica"?</div>'}</div>
   `;
 }
+let goalTypeState = 'valor';
+function setGoalType(type){
+  goalTypeState = type;
+  document.getElementById('goalTypeValor').classList.toggle('on', type==='valor');
+  document.getElementById('goalTypePlantoes').classList.toggle('on', type==='plantoes');
+  document.getElementById('goalFieldsValor').style.display = type==='valor' ? 'block' : 'none';
+  document.getElementById('goalFieldsPlantoes').style.display = type==='plantoes' ? 'block' : 'none';
+}
 function openGoalModal(id){
   const g = id ? data.goals.find(x=>x.id===id) : null;
+  goalTypeState = g ? (g.type||'valor') : 'valor';
   let sugestao = null;
-  if(g && g.deadline){
+  if(g && g.deadline && goalTypeState==='valor'){
     const months = Math.max(1, Math.ceil((new Date(g.deadline)-new Date())/(1000*60*60*24*30)));
     sugestao = Math.max(0,(g.target-g.current))/months;
   }
   openModalWith(`
     <h3>${g?'Editar meta':'Nova meta'}</h3>
-    <div class="field"><label>Nome</label><input id="f_gname" value="${g?escapeHtml(g.name):''}" placeholder="Ex: Reserva para residência médica"></div>
-    <div class="field-row">
-      <div class="field"><label>Valor alvo (R$)</label><input id="f_gtarget" type="number" step="0.01" value="${g?g.target:''}" placeholder="0,00"></div>
-      <div class="field"><label>Valor atual (R$)</label><input id="f_gcurrent" type="number" step="0.01" value="${g?g.current:0}" placeholder="0,00"></div>
+    <div class="field"><label>Nome</label><input id="f_gname" value="${g?escapeHtml(g.name):''}" placeholder="Ex: Reserva para residência médica, Carro novo..."></div>
+    <div class="toggle-row">
+      <button type="button" id="goalTypeValor" class="${goalTypeState==='valor'?'on':''}" onclick="setGoalType('valor')">Valor livre</button>
+      <button type="button" id="goalTypePlantoes" class="${goalTypeState==='plantoes'?'on':''}" onclick="setGoalType('plantoes')">Quantidade de plantões</button>
+    </div>
+    <div id="goalFieldsValor" style="display:${goalTypeState==='valor'?'block':'none'};">
+      <div class="field-row">
+        <div class="field"><label>Valor alvo (R$)</label><input id="f_gtarget" type="number" step="0.01" value="${g?g.target:''}" placeholder="0,00"></div>
+        <div class="field"><label>Valor atual (R$)</label><input id="f_gcurrent" type="number" step="0.01" value="${g?g.current:0}" placeholder="0,00"></div>
+      </div>
+    </div>
+    <div id="goalFieldsPlantoes" style="display:${goalTypeState==='plantoes'?'block':'none'};">
+      <div class="field-row">
+        <div class="field"><label>Quantidade de plantões</label><input id="f_gtargetcount" type="number" step="1" value="${g&&g.targetCount?g.targetCount:''}" placeholder="Ex: 10"></div>
+        <div class="field"><label>Valor de referência por plantão (R$)</label><input id="f_gvalueper" type="number" step="0.01" value="${g&&g.valuePerShift?g.valuePerShift:''}" placeholder="Ex: 1000"></div>
+      </div>
+      <div class="infobox">O progresso conta os plantões marcados "Recebido" que você vincular a esta meta lá em Plantões & Trabalhos.</div>
     </div>
     <div class="field"><label>Prazo (opcional)</label><input id="f_gdeadline" type="date" value="${g&&g.deadline?g.deadline:''}"></div>
-    <div class="field"><label>Quanto quer guardar por mês (opcional)</label><input id="f_gmonthly" type="number" step="0.01" value="${g&&g.monthlyTarget?g.monthlyTarget:''}" placeholder="${sugestao?('sugestão pelo prazo: '+fmtMoney(sugestao)):'0,00'}"></div>
+    ${goalTypeState==='valor' ? `<div class="field"><label>Quanto quer guardar por mês (opcional)</label><input id="f_gmonthly" type="number" step="0.01" value="${g&&g.monthlyTarget?g.monthlyTarget:''}" placeholder="${sugestao?('sugestão pelo prazo: '+fmtMoney(sugestao)):'0,00'}"></div>` : ''}
     <div class="modal-actions">
       <button class="btn ghost" onclick="closeModal()">Cancelar</button>
       <button class="btn accent" onclick="saveGoal('${g?g.id:''}')">Salvar</button>
@@ -1990,13 +2037,26 @@ function openGoalModal(id){
 }
 function saveGoal(id){
   const name = document.getElementById('f_gname').value.trim();
-  const target = parseFloat(document.getElementById('f_gtarget').value);
-  const current = parseFloat(document.getElementById('f_gcurrent').value)||0;
   const deadline = document.getElementById('f_gdeadline').value || null;
-  const monthlyTarget = parseFloat(document.getElementById('f_gmonthly').value) || null;
-  if(!name || isNaN(target) || target<=0){ toast('Preencha nome e valor alvo.'); return; }
-  if(id){ Object.assign(data.goals.find(x=>x.id===id), {name,target,current,deadline,monthlyTarget}); }
-  else{ data.goals.push({id: uid(), name, target, current, deadline, monthlyTarget, contributions: []}); }
+  if(!name){ toast('Preencha o nome da meta.'); return; }
+  let payload = { name, deadline, type: goalTypeState };
+  if(goalTypeState==='plantoes'){
+    const targetCount = parseInt(document.getElementById('f_gtargetcount').value);
+    const valuePerShift = parseFloat(document.getElementById('f_gvalueper').value)||0;
+    if(!targetCount || targetCount<=0){ toast('Preencha a quantidade de plantões.'); return; }
+    payload.targetCount = targetCount;
+    payload.valuePerShift = valuePerShift;
+    payload.target = targetCount*valuePerShift;
+    payload.current = 0; // derivado dos plantões vinculados
+  } else {
+    const target = parseFloat(document.getElementById('f_gtarget').value);
+    const current = parseFloat(document.getElementById('f_gcurrent').value)||0;
+    const monthlyTarget = parseFloat(document.getElementById('f_gmonthly').value) || null;
+    if(isNaN(target) || target<=0){ toast('Preencha o valor alvo.'); return; }
+    payload.target = target; payload.current = current; payload.monthlyTarget = monthlyTarget;
+  }
+  if(id){ Object.assign(data.goals.find(x=>x.id===id), payload); }
+  else{ data.goals.push(Object.assign({id: uid(), contributions: []}, payload)); }
   closeModal(); renderAll(); scheduleSave(); toast('Meta salva.');
 }
 function openGoalAporteModal(goalId){
@@ -2872,7 +2932,11 @@ function renderTutorial(){
     `)}
 
     ${tutoSection('Metas e Reserva de emergência', `
-      <p><b>Metas</b> é de uso livre — crie quantas quiser, com valor alvo, valor atual e prazo opcional (o app calcula o aporte mensal necessário).</p>
+      <p><b>Metas</b> tem dois tipos:</p>
+      <ul>
+        <li><b>Valor livre</b>: valor alvo, valor atual, prazo opcional (o app sugere o aporte mensal necessário), plano mensal editável e botão "+ Registrar aporte" com evolução dos últimos 6 meses.</li>
+        <li><b>Quantidade de plantões</b>: você define quantos plantões quer fazer e o valor de referência de cada um (ex: 10 plantões de R$ 1.000 pra comprar o carro). O progresso conta automaticamente os plantões que você marcar como "Recebido" e vincular a essa meta lá em Plantões & Trabalhos (campo "Meta vinculada").</li>
+      </ul>
       <p><b>Reserva de emergência</b> é calculada de um jeito específico: você escolhe quantos meses de cobertura quer (3/6/9/12), e o app multiplica isso pelo seu <b>gasto essencial médio real</b> dos últimos meses. Marque uma conta como "esta é minha reserva" (em Contas) ou um investimento com objetivo "Reserva de emergência" para que o valor conte automaticamente aqui.</p>
     `)}
 
