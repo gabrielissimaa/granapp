@@ -242,6 +242,7 @@
   .agenda-cell.avail{background:rgba(0,230,160,0.10);border-color:rgba(0,230,160,0.28);}
   .agenda-cell.unavail{opacity:.5;}
   .agenda-cell.hasshift{background:rgba(139,108,255,0.18);border-color:rgba(139,108,255,0.45);opacity:1;}
+  .agenda-cell.exception{background:rgba(255,92,122,0.08);border-color:rgba(255,92,122,0.25);opacity:.7;}
   .agenda-cell.today{box-shadow:0 0 0 2px var(--violet);}
   .agenda-daynum{font-weight:600;color:var(--text);}
   .agenda-icons{font-size:9.5px;line-height:1;margin-top:1px;letter-spacing:-1px;}
@@ -331,7 +332,6 @@
     <div class="page" id="page-metas"></div>
     <div class="page" id="page-reserva"></div>
     <div class="page" id="page-assinaturas"></div>
-    <div class="page" id="page-impostos"></div>
     <div class="page" id="page-regras"></div>
     <div class="page" id="page-categorias"></div>
     <div class="page" id="page-contas"></div>
@@ -394,9 +394,11 @@ function ensureAvailabilitySeeded(){
         4: Object.assign(blank(), {noite:true}),                            // quinta
         5: Object.assign(blank(), {noite:true}),                            // sexta
         6: Object.assign(blank(), {manha:true, tarde:true, noite:true}),   // sábado
-      }
+      },
+      exceptions: {}
     };
   }
+  if(!data.availability.exceptions) data.availability.exceptions = {};
 }
 function categoryNames(group){
   if(!data.categories) return [];
@@ -409,7 +411,6 @@ const ACCOUNT_BANKS = ['Inter','Itaú','Santander','Banco do Brasil','Nubank','C
 const ACCOUNT_TYPES = ['Conta corrente','Poupança','Cartão de crédito','Carteira/Dinheiro','Investimento'];
 const INVEST_TYPES = ['Tesouro Direto','CDB','LCI/LCA','Fundos','Ações','ETFs','FIIs','Previdência','Outros'];
 const INVEST_OBJECTIVES = ['Reserva de emergência','Residência médica','Aposentadoria','Outros'];
-const TAX_INCOME_TYPES = ['PF','RPA','CLT','PJ'];
 const SUB_PERIODICITY = ['Mensal','Anual','Trimestral','Semestral'];
 
 const CATEGORY_COLORS = {
@@ -450,7 +451,6 @@ const NAV_GROUPS = [
   ]},
   {label:'GESTÃO', items:[
     {id:'assinaturas', label:'Assinaturas', icon:'M17 8a5 5 0 00-10 0v3H5l1.5 10h11L19 11h-2V8z'},
-    {id:'impostos', label:'Impostos', icon:'M9 12h6m-6 4h6M7 4h10a2 2 0 012 2v13l-3-2-2 2-2-2-2 2-2-2-3 2V6a2 2 0 012-2z'},
     {id:'regras', label:'Regras', icon:'M4 6h16M7 12h10M10 18h4'},
     {id:'categorias', label:'Categorias', icon:'M7 7h.01M3 5a2 2 0 012-2h6.586a1 1 0 01.707.293l8 8a1 1 0 010 1.414l-8.586 8.586a1 1 0 01-1.414 0l-8-8A1 1 0 013 12.586V5z'},
     {id:'importar', label:'Importar extrato', icon:'M12 3v12m0 0l-4-4m4 4l4-4M4 19h16'},
@@ -751,9 +751,9 @@ function accountBalance(a){
     }
   });
   data.shifts.forEach(sh=>{
-    if(sh.status==='Recebido' && sh.accountId===a.id){
+    if((sh.status==='Recebido'||sh.status==='Parcial') && sh.accountId===a.id){
       const d = sh.actualDate || sh.date;
-      if(d > anchor) bal = applyInflow(bal, (sh.netAmount||sh.grossAmount||0), a);
+      if(d > anchor) bal = applyInflow(bal, shiftReceivedAmount(sh), a);
     }
   });
   return bal;
@@ -763,10 +763,21 @@ function accountsNetBalance(){
 }
 function investmentsTotal(){ return data.investments.reduce((s,i)=>s+i.currentValue,0); }
 function netWorth(){ return accountsNetBalance() + investmentsTotal(); }
+function shiftReceivedAmount(sh){
+  if(sh.status==='Recebido') return sh.netAmount||sh.grossAmount||0;
+  if(sh.status==='Parcial') return sh.receivedAmount||0;
+  return 0;
+}
+function shiftPendingAmount(sh){
+  const total = sh.netAmount||sh.grossAmount||0;
+  if(sh.status==='Recebido') return 0;
+  if(sh.status==='Parcial') return Math.max(0, total-(sh.receivedAmount||0));
+  return total;
+}
 
 function receitasInRange(range){
   const txSum = data.transactions.filter(t=>t.type==='receita' && inRange(t.date,range)).reduce((s,t)=>s+t.amount,0);
-  const shiftSum = data.shifts.filter(sh=>sh.status==='Recebido' && inRange(sh.actualDate||sh.date,range)).reduce((s,sh)=>s+(sh.netAmount||sh.grossAmount||0),0);
+  const shiftSum = data.shifts.filter(sh=>(sh.status==='Recebido'||sh.status==='Parcial') && inRange(sh.actualDate||sh.date,range)).reduce((s,sh)=>s+shiftReceivedAmount(sh),0);
   return txSum + shiftSum;
 }
 function despesasInRange(range, filterFn){
@@ -802,32 +813,36 @@ function monthsWithAnyData(){
    RENDER: VISÃO GERAL
 ========================================================= */
 let visaoState = { period:'mes-atual', customStart:null, customEnd:null };
-function generateMonthlySummary(){
+let summaryMonthOffset = 1;
+function generateMonthlySummary(offset){
   const now = new Date();
-  const prevMonthDate = new Date(now.getFullYear(), now.getMonth()-1, 1);
-  const range = rangeForPeriod('custom', prevMonthDate.toISOString().slice(0,10), new Date(prevMonthDate.getFullYear(), prevMonthDate.getMonth()+1, 0).toISOString().slice(0,10));
-  const monthName = prevMonthDate.toLocaleDateString('pt-BR', {month:'long'});
+  const targetDate = new Date(now.getFullYear(), now.getMonth()-offset, 1);
+  const isCurrent = offset===0;
+  const endDate = isCurrent ? now : new Date(targetDate.getFullYear(), targetDate.getMonth()+1, 0);
+  const range = rangeForPeriod('custom', targetDate.toISOString().slice(0,10), endDate.toISOString().slice(0,10));
+  const monthName = targetDate.toLocaleDateString('pt-BR', {month:'long'});
 
   const receita = receitasInRange(range);
   const gastos = despesasInRange(range);
   const investido = investidoInRange(range);
   const saldo = receita - gastos;
-  if(receita===0 && gastos===0) return null;
+  if(receita===0 && gastos===0) return `Sem lançamentos em ${monthName} ainda.`;
 
   const catTotals = {};
   data.transactions.filter(t=>t.type==='despesa' && inRange(t.date,range)).forEach(t=>{ catTotals[t.category]=(catTotals[t.category]||0)+t.amount; });
   const catSorted = Object.entries(catTotals).sort((a,b)=>b[1]-a[1]);
   const maiorCategoria = catSorted[0];
 
-  // comparação com o mês anterior a esse
-  const twoMonthsAgo = new Date(now.getFullYear(), now.getMonth()-2, 1);
-  const rangePrev = rangeForPeriod('custom', twoMonthsAgo.toISOString().slice(0,10), new Date(twoMonthsAgo.getFullYear(), twoMonthsAgo.getMonth()+1, 0).toISOString().slice(0,10));
+  const prevTargetDate = new Date(targetDate.getFullYear(), targetDate.getMonth()-1, 1);
+  const rangePrev = rangeForPeriod('custom', prevTargetDate.toISOString().slice(0,10), new Date(prevTargetDate.getFullYear(), prevTargetDate.getMonth()+1, 0).toISOString().slice(0,10));
   const gastosPrev = despesasInRange(rangePrev);
   const diffGastos = gastosPrev>0 ? ((gastos-gastosPrev)/gastosPrev)*100 : null;
 
   const metasContribMes = data.goals.reduce((s,g)=> s + goalMonthlyContributed(g, monthKey(range.start)), 0);
 
-  let texto = `Em ${monthName}, você ganhou ${fmtMoney(receita)} e gastou ${fmtMoney(gastos)}`;
+  let texto = isCurrent
+    ? `Até agora, em ${monthName} (mês em andamento), você ganhou ${fmtMoney(receita)} e gastou ${fmtMoney(gastos)}`
+    : `Em ${monthName}, você ganhou ${fmtMoney(receita)} e gastou ${fmtMoney(gastos)}`;
   texto += saldo>=0 ? `, deixando um saldo positivo de ${fmtMoney(saldo)}.` : `, ficando no negativo em ${fmtMoney(Math.abs(saldo))}.`;
   if(maiorCategoria){
     texto += ` A categoria com maior gasto foi ${maiorCategoria[0]} (${fmtMoney(maiorCategoria[1])}).`;
@@ -835,16 +850,20 @@ function generateMonthlySummary(){
   if(investido>0 || metasContribMes>0){
     texto += ` Você guardou ${fmtMoney(investido+metasContribMes)} entre investimentos e metas.`;
   } else {
-    texto += ` Não houve aportes registrados em investimentos ou metas neste mês.`;
+    texto += ` Não houve aportes registrados em investimentos ou metas neste período.`;
   }
   if(diffGastos!=null){
     texto += diffGastos>5 ? ` Seus gastos subiram ${diffGastos.toFixed(0)}% em relação ao mês anterior.` : diffGastos<-5 ? ` Seus gastos caíram ${Math.abs(diffGastos).toFixed(0)}% em relação ao mês anterior.` : ` Seus gastos ficaram estáveis em relação ao mês anterior.`;
   }
   return texto;
 }
+function setSummaryMonth(offset){
+  summaryMonthOffset = parseInt(offset);
+  renderVisao();
+}
 function renderVisao(){
   const el = document.getElementById('page-visao');
-  const monthlySummary = generateMonthlySummary();
+  const monthlySummary = generateMonthlySummary(summaryMonthOffset);
   const range = rangeForPeriod(visaoState.period, visaoState.customStart, visaoState.customEnd);
   const receita = receitasInRange(range);
   const gastos = despesasInRange(range);
@@ -911,7 +930,12 @@ function renderVisao(){
 
     ${monthlySummary ? `
     <section class="block">
-      <div class="block-head"><h3>Resumo do mês passado</h3></div>
+      <div class="block-head">
+        <h3>Resumo do mês</h3>
+        <select class="period" id="summaryMonthSelect" onchange="setSummaryMonth(this.value)">
+          ${(()=>{ const now=new Date(); let opts=''; for(let i=0;i<=11;i++){ const d=new Date(now.getFullYear(),now.getMonth()-i,1); const label=d.toLocaleDateString('pt-BR',{month:'long',year:'numeric'})+(i===0?' (em andamento)':''); opts+=`<option value="${i}" ${i===summaryMonthOffset?'selected':''}>${label}</option>`; } return opts; })()}
+        </select>
+      </div>
       <div class="panel"><p style="margin:0;line-height:1.6;font-size:14px;color:var(--text);">${monthlySummary}</p></div>
     </section>` : ''}
 
@@ -1036,13 +1060,13 @@ function shiftAsVirtualTx(sh){
   const ct = sh.contractType || 'Plantão';
   return {
     id: 'shift-'+sh.id, type:'receita', date: sh.actualDate||sh.date,
-    description: sh.location ? (ct+' — '+sh.location) : ct,
-    amount: sh.netAmount||sh.grossAmount||0, category:ct, source:ct,
+    description: sh.location ? (ct+' — '+sh.location+(sh.status==='Parcial'?' (parcial)':'')) : ct,
+    amount: shiftReceivedAmount(sh), category:ct, source:ct,
     accountId: sh.accountId, purpose:'profissional', notes: sh.notes||'',
     isShift:true, shiftRef: sh.id
   };
 }
-function receivedShiftsAsTx(){ return data.shifts.filter(s=>s.status==='Recebido').map(shiftAsVirtualTx); }
+function receivedShiftsAsTx(){ return data.shifts.filter(s=>s.status==='Recebido'||s.status==='Parcial').map(shiftAsVirtualTx); }
 function txRowHtml(t){
   const acc = data.accounts.find(a=>a.id===t.accountId);
   const color = colorForCategory(t.category);
@@ -1072,7 +1096,7 @@ function txRowHtml(t){
 function renderLancamentos(){
   const el = document.getElementById('page-lancamentos');
   let list = [...data.transactions, ...receivedShiftsAsTx()];
-  const totalCount = data.transactions.length + data.shifts.filter(s=>s.status==='Recebido').length;
+  const totalCount = data.transactions.length + data.shifts.filter(s=>s.status==='Recebido'||s.status==='Parcial').length;
   if(lancFilter.type!=='all') list = list.filter(t=>t.type===lancFilter.type);
   if(lancFilter.purpose!=='all') list = list.filter(t=>t.purpose===lancFilter.purpose);
   if(lancFilter.essential!=='all') list = list.filter(t=>t.essential===lancFilter.essential);
@@ -1262,24 +1286,24 @@ function renderReceitas(){
 /* =========================================================
    RENDER: TRABALHOS / PLANTÕES
 ========================================================= */
-const SHIFT_STATUS = ['Previsto','Recebido','Atrasado'];
+const SHIFT_STATUS = ['Previsto','Recebido','Parcial','Atrasado'];
 const CONTRACT_TYPES = ['Plantão','Clínica da família','Outro'];
 function shiftCardRow(sh){
-  const color = sh.status==='Recebido' ? 'var(--mint)' : sh.status==='Atrasado' ? 'var(--coral)' : 'var(--amber)';
+  const color = sh.status==='Recebido' ? 'var(--mint)' : sh.status==='Parcial' ? 'var(--cyan)' : sh.status==='Atrasado' ? 'var(--coral)' : 'var(--amber)';
   const acc = data.accounts.find(a=>a.id===sh.accountId);
   const ct = sh.contractType || 'Plantão';
-  const goal = sh.goalId ? data.goals.find(g=>g.id===sh.goalId) : null;
   const periodIcon = sh.period==='Noite' ? '🌙' : '☀️';
+  const total = sh.netAmount||sh.grossAmount||0;
+  const amtLabel = sh.status==='Parcial' ? `${fmtMoney(sh.receivedAmount||0)} de ${fmtMoney(total)}` : fmtMoney(total);
   return `
     <div class="row" style="--accent:${color}">
       <div class="date">${fmtDate(sh.date)}</div>
       <div class="desc"><div class="t">${escapeHtml(sh.location||'—')}</div></div>
       <span class="badge outline">${periodIcon} ${escapeHtml(ct)}</span>
       ${sh.hours?`<span class="badge outline">${sh.hours}h</span>`:''}
-      ${goal?`<span class="badge" style="background:var(--violet)26;color:var(--violet)">🎯 ${escapeHtml(goal.name)}</span>`:''}
       <span class="badge" style="background:${color}26;color:${color}">${sh.status}</span>
       <div class="acc">${acc?escapeHtml(acc.name):'—'}</div>
-      <div class="amt num pos">${fmtMoney(sh.netAmount||sh.grossAmount||0)}</div>
+      <div class="amt num pos">${amtLabel}</div>
       <div class="actions">
         <button class="iconbtn" onclick="openShiftModal('${sh.id}')" title="Editar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M11 4H6a2 2 0 00-2 2v12a2 2 0 002 2h12a2 2 0 002-2v-5M18.5 2.5a2.1 2.1 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
         <button class="iconbtn" onclick="deleteEntry('shifts','${sh.id}')" title="Excluir"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6 7h12M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2m2 0v13a1 1 0 01-1 1H8a1 1 0 01-1-1V7h10z"/></svg></button>
@@ -1289,13 +1313,12 @@ function shiftCardRow(sh){
 function renderTrabalhos(){
   const el = document.getElementById('page-trabalhos');
   const list = [...data.shifts].sort((a,b)=>b.date.localeCompare(a.date));
-  const recebidos = data.shifts.filter(s=>s.status==='Recebido');
-  const pendentes = data.shifts.filter(s=>s.status!=='Recebido');
+  const recebidos = data.shifts.filter(s=>s.status==='Recebido'||s.status==='Parcial');
   const totalHoras = data.shifts.reduce((s,sh)=>s+(parseFloat(sh.hours)||0),0);
-  const totalReceita = recebidos.reduce((s,sh)=>s+(sh.netAmount||sh.grossAmount||0),0);
+  const totalReceita = recebidos.reduce((s,sh)=>s+shiftReceivedAmount(sh),0);
   const mediaPorPlantao = recebidos.length ? totalReceita/recebidos.length : 0;
   const mediaPorHora = totalHoras>0 ? totalReceita/totalHoras : 0;
-  const totalPendente = pendentes.reduce((s,sh)=>s+(sh.netAmount||sh.grossAmount||0),0);
+  const totalPendente = data.shifts.reduce((s,sh)=>s+shiftPendingAmount(sh),0);
 
   // Previsão de recebimento por mês — só Plantão/Outro (exclui Clínica da família)
   const isPlantaoLike = sh => (sh.contractType||'Plantão') !== 'Clínica da família';
@@ -1303,8 +1326,8 @@ function renderTrabalhos(){
     (()=>{ const out=[]; const now=new Date(); for(let i=1;i<=6;i++){ const d=new Date(now.getFullYear(),now.getMonth()+i,1); out.push({key:d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'), label:d.toLocaleDateString('pt-BR',{month:'short',year:'2-digit'})}); } return out; })()
   );
   const forecastRows = months8.map(m=>{
-    const previsto = data.shifts.filter(sh=>isPlantaoLike(sh) && sh.status!=='Recebido' && monthKey(sh.expectedDate||sh.date)===m.key).reduce((s,sh)=>s+(sh.netAmount||sh.grossAmount||0),0);
-    const recebido = data.shifts.filter(sh=>isPlantaoLike(sh) && sh.status==='Recebido' && monthKey(sh.actualDate||sh.date)===m.key).reduce((s,sh)=>s+(sh.netAmount||sh.grossAmount||0),0);
+    const previsto = data.shifts.filter(sh=>isPlantaoLike(sh) && shiftPendingAmount(sh)>0 && monthKey(sh.expectedDate||sh.date)===m.key).reduce((s,sh)=>s+shiftPendingAmount(sh),0);
+    const recebido = data.shifts.filter(sh=>isPlantaoLike(sh) && (sh.status==='Recebido'||sh.status==='Parcial') && monthKey(sh.actualDate||sh.date)===m.key).reduce((s,sh)=>s+shiftReceivedAmount(sh),0);
     return {label:m.label, previsto, recebido};
   }).filter(r=>r.previsto>0 || r.recebido>0);
 
@@ -1346,7 +1369,7 @@ function openShiftModal(id, prefillDate){
     <h3>${s?'Editar plantão/trabalho':'Novo plantão/trabalho'}</h3>
     <div class="field-row">
       <div class="field"><label>Data</label><input id="f_date" type="date" value="${s?s.date:(prefillDate||todayStr())}"></div>
-      <div class="field"><label>Status</label><select id="f_status">${SHIFT_STATUS.map(x=>`<option ${s&&s.status===x?'selected':''}>${x}</option>`).join('')}</select></div>
+      <div class="field"><label>Status</label><select id="f_status" onchange="document.getElementById('f_receivedWrap').style.display=this.value==='Parcial'?'block':'none';">${SHIFT_STATUS.map(x=>`<option ${s&&s.status===x?'selected':''}>${x}</option>`).join('')}</select></div>
     </div>
     <div class="field-row">
       <div class="field"><label>Período</label><select id="f_period">
@@ -1364,6 +1387,9 @@ function openShiftModal(id, prefillDate){
       <div class="field"><label>Valor bruto (R$)</label><input id="f_gross" type="number" step="0.01" value="${s?s.grossAmount||'':''}" placeholder="0,00"></div>
       <div class="field"><label>Valor líquido (R$)</label><input id="f_net" type="number" step="0.01" value="${s?s.netAmount||'':''}" placeholder="0,00"></div>
     </div>
+    <div class="field" id="f_receivedWrap" style="display:${s&&s.status==='Parcial'?'block':'none'};">
+      <label>Valor já recebido (R$)</label><input id="f_received" type="number" step="0.01" value="${s?s.receivedAmount||'':''}" placeholder="0,00">
+    </div>
     <div class="field-row">
       <div class="field"><label>Pagador</label><input id="f_payer" value="${s?escapeHtml(s.payer||''):''}" placeholder="Ex: São Matheus"></div>
       <div class="field"><label>Forma de pagamento</label><input id="f_paymethod" value="${s?escapeHtml(s.paymentMethod||''):''}" placeholder="Pix, RPA..."></div>
@@ -1373,9 +1399,6 @@ function openShiftModal(id, prefillDate){
       <div class="field"><label>Data efetiva de pgto</label><input id="f_actual" type="date" value="${s&&s.actualDate?s.actualDate:''}"></div>
     </div>
     <div class="field"><label>Conta</label><select id="f_acc"><option value="">—</option>${accountOptions(s?s.accountId:null)}</select></div>
-    ${data.goals.filter(g=>g.type==='plantoes').length ? `
-    <div class="field"><label>Meta vinculada (opcional)</label><select id="f_goalId"><option value="">Nenhuma</option>${data.goals.filter(g=>g.type==='plantoes').map(g=>`<option value="${g.id}" ${s&&s.goalId===g.id?'selected':''}>${escapeHtml(g.name)}</option>`).join('')}</select></div>
-    ` : ''}
     <div class="field"><label>Observações</label><input id="f_notes" value="${s?escapeHtml(s.notes||''):''}"></div>
     <div class="modal-actions">
       <button class="btn ghost" onclick="closeModal()">Cancelar</button>
@@ -1400,8 +1423,8 @@ function saveShift(id){
     expectedDate: document.getElementById('f_expected').value||null,
     actualDate: document.getElementById('f_actual').value||null,
     status: document.getElementById('f_status').value,
+    receivedAmount: parseFloat(document.getElementById('f_received').value)||0,
     accountId: document.getElementById('f_acc').value,
-    goalId: document.getElementById('f_goalId') ? (document.getElementById('f_goalId').value || null) : null,
     notes: document.getElementById('f_notes').value.trim(),
   };
   if(id){ Object.assign(data.shifts.find(x=>x.id===id), payload); }
@@ -1430,7 +1453,8 @@ function renderAvailabilityEditor(){
       <summary>Disponibilidade semanal (padrão)<span class="plus">+</span></summary>
       <div class="tuto-body">
         <p style="color:var(--text-muted);font-size:12.5px;margin:0 0 14px 0;">Marque os períodos em que costuma estar livre para plantão. Isso é só um padrão — pode mudar quando quiser, e cada dia específico ainda pode ter um plantão marcado por cima.</p>
-        ${WEEKDAY_NAMES.map((name,dow)=>{
+        ${[1,2,3,4,5,6,0].map(dow=>{
+          const name = WEEKDAY_NAMES[dow];
           const a = data.availability.weekTemplate[dow];
           return `
           <div style="display:flex;align-items:center;gap:8px;padding:9px 0;border-bottom:1px solid var(--border);flex-wrap:wrap;">
@@ -1445,10 +1469,18 @@ function renderAvailabilityEditor(){
     </details>
   `;
 }
+function getEffectiveAvailability(dateStr, dow){
+  const templ = data.availability.weekTemplate[dow];
+  const exc = data.availability.exceptions && data.availability.exceptions[dateStr];
+  if(exc && exc.available===false){
+    return {manha:false, tarde:false, noite:false, note: exc.note||'', isException:true};
+  }
+  return Object.assign({}, templ, {isException:false});
+}
 function renderAgendaCalendar(){
   const {year, month} = agendaState;
   const first = new Date(year, month, 1);
-  const startDow = first.getDay();
+  const startDow = (first.getDay()+6)%7; // 0=Segunda ... 6=Domingo
   const daysInMonth = new Date(year, month+1, 0).getDate();
   const cells = [];
   for(let i=0;i<startDow;i++) cells.push(null);
@@ -1456,12 +1488,12 @@ function renderAgendaCalendar(){
   while(cells.length % 7 !== 0) cells.push(null);
   const todayStrVal = todayStr();
   let html = '<div class="agenda-grid">';
-  ['D','S','T','Q','Q','S','S'].forEach(d=> html += `<div class="agenda-dow">${d}</div>`);
+  ['S','T','Q','Q','S','S','D'].forEach(d=> html += `<div class="agenda-dow">${d}</div>`);
   cells.forEach(d=>{
     if(d===null){ html += '<div class="agenda-cell empty"></div>'; return; }
     const dateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
     const dow = new Date(year,month,d).getDay();
-    const avail = data.availability.weekTemplate[dow];
+    const avail = getEffectiveAvailability(dateStr, dow);
     const hasDay = avail.manha || avail.tarde;
     const hasNight = avail.noite;
     const isAvail = hasDay || hasNight;
@@ -1470,14 +1502,14 @@ function renderAgendaCalendar(){
     const dayBooked = shiftsOnDay.some(sh=>(sh.period||'Dia')==='Dia');
     const nightBooked = shiftsOnDay.some(sh=>(sh.period||'Dia')==='Noite');
     const hasShift = shiftsOnDay.length>0;
-    const cellClass = hasShift ? 'hasshift' : (isAvail ? 'avail' : 'unavail');
+    const cellClass = hasShift ? 'hasshift' : (avail.isException ? 'exception' : (isAvail ? 'avail' : 'unavail'));
     let icons = '';
     if(hasDay && !dayBooked) icons += '☀️';
     if(hasNight && !nightBooked) icons += '🌙';
     html += `
-      <div class="agenda-cell ${cellClass} ${isToday?'today':''}" onclick="openDayModal('${dateStr}')">
+      <div class="agenda-cell ${cellClass} ${isToday?'today':''}" onclick="openDayModal('${dateStr}')" ${avail.isException&&avail.note?`title="${escapeHtml(avail.note)}"`:''}>
         <div class="agenda-daynum">${d}</div>
-        ${icons ? `<div class="agenda-icons">${icons}</div>` : ''}
+        ${avail.isException && !hasShift ? `<div class="agenda-icons">🚫</div>` : (icons ? `<div class="agenda-icons">${icons}</div>` : '')}
         ${hasShift ? `<div class="agenda-dot"></div>` : ''}
       </div>`;
   });
@@ -1501,7 +1533,7 @@ function renderAgenda(){
       </div>
       <div class="panel">
         ${renderAgendaCalendar()}
-        <div class="legend" style="margin-top:14px;"><span><i style="background:rgba(0,230,160,0.35)"></i>Disponível (☀️ dia · 🌙 noite)</span><span><i style="background:var(--violet)"></i>Já tem plantão marcado</span></div>
+        <div class="legend" style="margin-top:14px;"><span><i style="background:rgba(0,230,160,0.35)"></i>Disponível (☀️ dia · 🌙 noite)</span><span><i style="background:var(--violet)"></i>Já tem plantão marcado</span><span><i style="background:rgba(255,92,122,0.4)"></i>🚫 Indisponível (manual)</span></div>
       </div>
     </section>
   `;
@@ -1514,7 +1546,7 @@ function changeAgendaMonth(delta){
 }
 function openDayModal(dateStr){
   const dow = new Date(dateStr+'T00:00:00').getDay();
-  const avail = data.availability.weekTemplate[dow];
+  const avail = getEffectiveAvailability(dateStr, dow);
   const shiftsOnDay = data.shifts.filter(sh=>sh.date===dateStr);
   const dayBooked = shiftsOnDay.some(sh=>(sh.period||'Dia')==='Dia');
   const nightBooked = shiftsOnDay.some(sh=>(sh.period||'Dia')==='Noite');
@@ -1522,11 +1554,17 @@ function openDayModal(dateStr){
   const statusColor = (templateAvail, booked) => booked ? 'var(--violet)' : (templateAvail ? 'var(--mint)' : 'var(--text-muted)');
   openModalWith(`
     <h3>${WEEKDAY_NAMES[dow]}, ${fmtDate(dateStr)}</h3>
-    <div class="chipgrid" style="margin-bottom:16px;">
-      <div class="chip"><div class="lbl">☀️ Manhã/Tarde</div><div class="val" style="color:${statusColor(avail.manha||avail.tarde, dayBooked)}">${statusLabel(avail.manha||avail.tarde, dayBooked)}</div></div>
-      <div class="chip"><div class="lbl">🌙 Noite</div><div class="val" style="color:${statusColor(avail.noite, nightBooked)}">${statusLabel(avail.noite, nightBooked)}</div></div>
-    </div>
-    ${avail.note ? `<p style="color:var(--text-muted);font-size:12.5px;margin:-8px 0 14px 0;">${escapeHtml(avail.note)}</p>` : ''}
+    ${avail.isException ? `
+      <div class="infobox" style="margin-bottom:14px;">Marcado manualmente como indisponível${avail.note?': '+escapeHtml(avail.note):''}.</div>
+      <button class="btn ghost sm" style="margin-bottom:16px;" onclick="removeAvailabilityException('${dateStr}')">Remover indisponibilidade</button>
+    ` : `
+      <div class="chipgrid" style="margin-bottom:16px;">
+        <div class="chip"><div class="lbl">☀️ Manhã/Tarde</div><div class="val" style="color:${statusColor(avail.manha||avail.tarde, dayBooked)}">${statusLabel(avail.manha||avail.tarde, dayBooked)}</div></div>
+        <div class="chip"><div class="lbl">🌙 Noite</div><div class="val" style="color:${statusColor(avail.noite, nightBooked)}">${statusLabel(avail.noite, nightBooked)}</div></div>
+      </div>
+      ${avail.note ? `<p style="color:var(--text-muted);font-size:12.5px;margin:-8px 0 14px 0;">${escapeHtml(avail.note)}</p>` : ''}
+      <button class="btn ghost sm" style="margin-bottom:16px;" onclick="openExceptionModal('${dateStr}')">Marcar este dia como indisponível</button>
+    `}
     ${shiftsOnDay.length ? `
       <div class="ledger" style="margin-bottom:16px;">
         ${shiftsOnDay.map(sh=>`
@@ -1538,115 +1576,111 @@ function openDayModal(dateStr){
     </div>
   `);
 }
+function openExceptionModal(dateStr){
+  openModalWith(`
+    <h3>Marcar ${fmtDate(dateStr)} como indisponível</h3>
+    <div class="field"><label>Motivo (opcional)</label><input id="f_excNote" placeholder="Ex: viagem, imprevisto, plantão já combinado em outro lugar..."></div>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="openDayModal('${dateStr}')">Cancelar</button>
+      <button class="btn accent" onclick="saveAvailabilityException('${dateStr}')">Marcar indisponível</button>
+    </div>
+  `);
+}
+function saveAvailabilityException(dateStr){
+  const note = document.getElementById('f_excNote').value.trim();
+  if(!data.availability.exceptions) data.availability.exceptions = {};
+  data.availability.exceptions[dateStr] = { available:false, note };
+  closeModal(); renderAgenda(); scheduleSave(); toast('Dia marcado como indisponível.');
+}
+function removeAvailabilityException(dateStr){
+  if(data.availability.exceptions) delete data.availability.exceptions[dateStr];
+  closeModal(); renderAgenda(); scheduleSave(); toast('Indisponibilidade removida.');
+}
 
 /* =========================================================
    RENDER: ORÇAMENTO
 ========================================================= */
 function renderOrcamento(){
   const el = document.getElementById('page-orcamento');
-  const now = new Date();
   const curRange = rangeForPeriod('mes-atual');
-  const months3 = lastNMonthKeys(3);
+  const now = new Date();
+  const curKey = now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
 
-  const rows = allCategoryNames().map(cat=>{
-    const monthVals = months3.map(m=>{
-      const r = rangeForPeriod('custom', m.key+'-01', new Date(m.year,m.month+1,0).toISOString().slice(0,10));
-      return data.transactions.filter(t=>t.type==='despesa' && t.category===cat && inRange(t.date,r)).reduce((s,t)=>s+t.amount,0);
-    });
-    const withData = monthVals.filter(v=>v>0);
-    const avg = withData.length ? monthVals.reduce((a,b)=>a+b,0)/months3.length : 0;
-    const realizado = data.transactions.filter(t=>t.type==='despesa' && t.category===cat && inRange(t.date,curRange)).reduce((s,t)=>s+t.amount,0);
-    const override = data.budgetOverrides[cat];
-    const orcamento = override!=null ? override : Math.round(avg);
-    return {cat, avg, realizado, orcamento, hasData: withData.length>0 || realizado>0};
-  }).filter(r=>r.hasData);
-
-  const receita6 = lastNMonthKeys(6).map(m=>{
-    const r = rangeForPeriod('custom', m.key+'-01', new Date(m.year,m.month+1,0).toISOString().slice(0,10));
-    return receitasInRange(r);
-  }).filter(v=>v>0);
-  const rendaMedia = receita6.length ? receita6.reduce((a,b)=>a+b,0)/receita6.length : 0;
-  const essAvg = essentialAvgMonthly(3);
-  const gastosFixosAvg = (()=>{ const r=rangeForPeriod('3m'); return despesasInRange(r, t=>t.fixedVariable==='fixo')/3; })();
-  const gastosProfAvg = (()=>{ const r=rangeForPeriod('3m'); return despesasInRange(r, t=>t.purpose==='profissional')/3; })();
-  const capacidadeMax = rendaMedia - (essAvg.avg);
-  const capacidadeMin = capacidadeMax * 0.5;
-  const temDadosCapacidade = rendaMedia>0 && essAvg.monthsWithData>0;
-
+  // Quanto posso gastar — acompanhamento em tempo real do mês atual
   const spReceita = receitasInRange(curRange);
-  const spGuardarMetas = data.goals.reduce((s,g)=>s+(g.monthlyTarget||0),0);
-  const spGuardarInvest = data.settings.plannedMonthlyInvestment || 0;
-  const spGuardar = spGuardarMetas + spGuardarInvest;
+  const spInvestido = investidoInRange(curRange);
+  const spMetas = data.goals.reduce((s,g)=>s+goalMonthlyContributed(g, curKey),0);
+  const spGuardar = spInvestido + spMetas;
   const spFixas = despesasInRange(curRange, t=>t.fixedVariable==='fixo');
-  const spDisponivel = spReceita - spGuardar - spFixas;
   const spVariavelGasto = despesasInRange(curRange, t=>t.fixedVariable==='variavel');
+  const spOrcamentoVariavel = spReceita - spGuardar - spFixas;
+  const spDisponivel = spOrcamentoVariavel - spVariavelGasto;
+
+  // % projetado x realizado (essencial / não essencial / investimentos), com base na categorização feita ao lançar
+  const essencial = despesasInRange(curRange, t=>t.essential==='essencial');
+  const naoEssencial = despesasInRange(curRange, t=>t.essential==='nao-essencial');
+  const pctEssencialReal = spReceita>0 ? (essencial/spReceita)*100 : 0;
+  const pctNaoEssencialReal = spReceita>0 ? (naoEssencial/spReceita)*100 : 0;
+  const pctInvestidoReal = spReceita>0 ? (spInvestido/spReceita)*100 : 0;
+  const targets = data.settings.budgetTargets || {essencial:50, naoEssencial:30, investido:20};
+  const semClassificar = data.transactions.filter(t=>t.type==='despesa' && inRange(t.date,curRange) && !t.essential).length;
 
   el.innerHTML = `
-    <div class="page-head"><div><h1>Orçamento</h1><p>Sugestões com base na média dos últimos 3 meses — edite livremente</p></div></div>
+    <div class="page-head"><div><h1>Orçamento</h1><p>Acompanhamento do mês atual</p></div></div>
 
     <section class="block">
       <div class="block-head"><h3>Quanto posso gastar este mês</h3></div>
       <div class="panel" style="max-width:640px;">
-        <p style="color:var(--text-muted);font-size:13px;margin:0 0 16px 0;">Método "pague-se primeiro": separa o que você quer guardar antes de olhar pra sobra — o que fica é o que você tem livre pra gastar no mês, sem contar o que já vai reservado.</p>
-        <table class="datatable" style="margin-bottom:6px;">
+        <p style="color:var(--text-muted);font-size:13px;margin:0 0 16px 0;">Vai descontando conforme você lança gastos — é um acompanhamento do que já aconteceu no mês, não uma previsão fixa.</p>
+        <table class="datatable" style="margin-bottom:14px;">
           <tbody>
             <tr><td>Receita do mês</td><td class="num pos" style="text-align:right;">${fmtMoney(spReceita)}</td></tr>
-            <tr><td>(–) Guardar (metas + investimentos planejados)</td><td class="num" style="text-align:right;color:var(--violet);">${fmtMoney(spGuardar)}</td></tr>
+            <tr><td>(–) Guardado até agora (metas + investimentos)</td><td class="num" style="text-align:right;color:var(--violet);">${fmtMoney(spGuardar)}</td></tr>
             <tr><td>(–) Despesas fixas do mês</td><td class="num neg" style="text-align:right;">${fmtMoney(spFixas)}</td></tr>
-            <tr style="font-weight:700;"><td style="border-top:2px solid var(--border-hi);">Disponível para gastos variáveis</td><td class="num" style="text-align:right;border-top:2px solid var(--border-hi);color:${spDisponivel>=0?'var(--mint)':'var(--coral)'};">${fmtMoney(spDisponivel)}</td></tr>
+            <tr><td>(–) Gastos variáveis já feitos</td><td class="num neg" style="text-align:right;">${fmtMoney(spVariavelGasto)}</td></tr>
+            <tr style="font-weight:700;"><td style="border-top:2px solid var(--border-hi);">Ainda disponível para gastar</td><td class="num" style="text-align:right;border-top:2px solid var(--border-hi);color:${spDisponivel>=0?'var(--mint)':'var(--coral)'};">${fmtMoney(spDisponivel)}</td></tr>
           </tbody>
         </table>
-        ${spDisponivel>0 ? `
-          <div class="split-row-title" style="margin-top:14px;">Já usado este mês (gastos variáveis)</div>
-          <div class="split"><div style="width:${Math.min(100,(spVariavelGasto/spDisponivel)*100)}%;background:${spVariavelGasto>spDisponivel?'var(--coral)':'var(--mint)'}"></div></div>
-          <div class="split-legend"><span>Gasto: <b class="num">${fmtMoney(spVariavelGasto)}</b></span><span>Ainda livre: <b class="num">${fmtMoney(Math.max(0,spDisponivel-spVariavelGasto))}</b></span></div>
+        ${spOrcamentoVariavel>0 ? `
+          <div class="split-row-title">Uso do espaço para gastos variáveis</div>
+          <div class="split"><div style="width:${Math.min(100,(spVariavelGasto/spOrcamentoVariavel)*100)}%;background:${spVariavelGasto>spOrcamentoVariavel?'var(--coral)':'var(--mint)'}"></div></div>
+          <div class="split-legend"><span>Gasto: <b class="num">${fmtMoney(spVariavelGasto)}</b></span><span>Livre: <b class="num">${fmtMoney(Math.max(0,spDisponivel))}</b></span></div>
         ` : ''}
-        <div class="infobox" style="margin-top:14px;">"Guardar" soma o plano mensal de cada meta (defina em Metas) + o que você marcar abaixo para investir este mês.</div>
-        <div class="field" style="margin-top:10px;max-width:260px;"><label>Quanto pretende investir este mês (R$)</label><input id="f_investPlanned" type="number" step="10" value="${data.settings.plannedMonthlyInvestment||''}" placeholder="0,00" onchange="updatePlannedInvestment(this.value)"></div>
       </div>
     </section>
 
-    ${rows.length ? `
-    <div class="panel" style="margin-bottom:24px;overflow-x:auto;">
-      <table class="datatable">
-        <thead><tr><th>Categoria</th><th>Média (3m)</th><th>Orçamento</th><th>Realizado (mês)</th><th>Diferença</th><th>% utilizado</th></tr></thead>
-        <tbody>
-          ${rows.map(r=>{
-            const diff = r.orcamento - r.realizado;
-            const pct = r.orcamento>0 ? (r.realizado/r.orcamento)*100 : 0;
-            return `<tr>
-              <td><span class="badge" style="background:${colorForCategory(r.cat)}26;color:${colorForCategory(r.cat)}">${escapeHtml(r.cat)}</span></td>
-              <td class="num">${fmtMoney(r.avg)}</td>
-              <td><input type="number" step="10" value="${r.orcamento}" onchange="updateBudget('${r.cat}', this.value)"></td>
-              <td class="num">${fmtMoney(r.realizado)}</td>
-              <td class="num ${diff>=0?'pos':'neg'}">${fmtMoney(diff)}</td>
-              <td class="num" style="color:${pct>100?'var(--coral)':pct>80?'var(--amber)':'var(--mint)'}">${pct.toFixed(0)}%</td>
-            </tr>`;
-          }).join('')}
-        </tbody>
-      </table>
-    </div>` : `<div class="infobox" style="margin-bottom:24px;">Ainda não há despesas categorizadas o suficiente para sugerir um orçamento. Lance algumas despesas para começar.</div>`}
-
     <section class="block">
-      <div class="block-head"><h3>Capacidade de investimento estimada</h3></div>
-      <div class="panel">
-        ${temDadosCapacidade ? `
-          <p style="color:var(--text-muted);font-size:13px;margin:0 0 10px 0;">Com base na sua renda média e gastos essenciais dos últimos meses, uma faixa possível de aporte mensal:</p>
-          <div class="value num" style="font-family:'Space Grotesk',sans-serif;font-size:26px;">${fmtMoney(Math.max(0,capacidadeMin))} – ${fmtMoney(Math.max(0,capacidadeMax))}</div>
-        ` : `<div class="empty">Histórico insuficiente para estimar. Continue lançando receitas e despesas.</div>`}
-        <div class="disclaimer" style="margin-top:14px;">Ferramenta de planejamento com base nos seus próprios dados — não é uma recomendação financeira personalizada.</div>
+      <div class="block-head"><h3>% projetado x realizado (mês atual)</h3></div>
+      <div class="panel" style="max-width:560px;overflow-x:auto;">
+        <table class="datatable">
+          <thead><tr><th>Categoria</th><th style="text-align:right;">% projetado</th><th style="text-align:right;">% realizado</th></tr></thead>
+          <tbody>
+            <tr>
+              <td>Essenciais</td>
+              <td style="text-align:right;"><input type="number" step="1" style="width:64px;" value="${targets.essencial}" onchange="updateBudgetTarget('essencial', this.value)">%</td>
+              <td class="num" style="text-align:right;color:${pctEssencialReal>targets.essencial?'var(--coral)':'var(--mint)'}">${pctEssencialReal.toFixed(0)}%</td>
+            </tr>
+            <tr>
+              <td>Não essenciais</td>
+              <td style="text-align:right;"><input type="number" step="1" style="width:64px;" value="${targets.naoEssencial}" onchange="updateBudgetTarget('naoEssencial', this.value)">%</td>
+              <td class="num" style="text-align:right;color:${pctNaoEssencialReal>targets.naoEssencial?'var(--coral)':'var(--mint)'}">${pctNaoEssencialReal.toFixed(0)}%</td>
+            </tr>
+            <tr>
+              <td>Investimentos</td>
+              <td style="text-align:right;"><input type="number" step="1" style="width:64px;" value="${targets.investido}" onchange="updateBudgetTarget('investido', this.value)">%</td>
+              <td class="num" style="text-align:right;color:${pctInvestidoReal<targets.investido?'var(--amber)':'var(--mint)'}">${pctInvestidoReal.toFixed(0)}%</td>
+            </tr>
+          </tbody>
+        </table>
+        ${semClassificar>0 ? `<div class="disclaimer" style="margin-top:14px;">${semClassificar} despesa(s) deste mês ainda não têm classificação essencial/não essencial — o % realizado fica incompleto até você classificar. Veja em Lançamentos (filtro "a classificar").</div>` : ''}
       </div>
     </section>
   `;
 }
-function updateBudget(cat, value){
+function updateBudgetTarget(key, value){
   const v = parseFloat(value);
-  data.budgetOverrides[cat] = isNaN(v) ? undefined : v;
-  scheduleSave();
-}
-function updatePlannedInvestment(value){
-  const v = parseFloat(value);
-  data.settings.plannedMonthlyInvestment = isNaN(v) ? 0 : v;
+  if(!data.settings.budgetTargets) data.settings.budgetTargets = {essencial:50, naoEssencial:30, investido:20};
+  data.settings.budgetTargets[key] = isNaN(v) ? 0 : v;
   scheduleSave();
 }
 
@@ -1659,12 +1693,12 @@ function computeDRE(range, scope){
   const matches = (p) => scope==='consolidado' ? true : p===scope;
 
   const receitaTx = data.transactions.filter(t=>t.type==='receita' && inRange(t.date,range) && matches(receitaPurpose(t)));
-  const receitaShifts = matches('profissional') ? data.shifts.filter(s=>s.status==='Recebido' && inRange(s.actualDate||s.date,range)) : [];
+  const receitaShifts = matches('profissional') ? data.shifts.filter(s=>(s.status==='Recebido'||s.status==='Parcial') && inRange(s.actualDate||s.date,range)) : [];
 
   const receitaBySource = {};
   receitaTx.forEach(t=>{ const k=t.source||t.category||'Outros'; receitaBySource[k]=(receitaBySource[k]||0)+t.amount; });
   if(receitaShifts.length){
-    const totalShifts = receitaShifts.reduce((s,sh)=>s+(sh.netAmount||sh.grossAmount||0),0);
+    const totalShifts = receitaShifts.reduce((s,sh)=>s+shiftReceivedAmount(sh),0);
     receitaBySource['Plantões'] = (receitaBySource['Plantões']||0) + totalShifts;
   }
   const totalReceita = Object.values(receitaBySource).reduce((a,b)=>a+b,0);
@@ -1955,31 +1989,21 @@ function registerSnapshot(){
 function goalMonthlyContributed(g, monthKeyStr){
   return (g.contributions||[]).filter(c=>monthKey(c.date)===monthKeyStr).reduce((s,c)=>s+c.amount,0);
 }
-function shiftsLinkedToGoal(goalId){ return data.shifts.filter(sh=>sh.goalId===goalId); }
+function goalMonthlyPlan(g, monthKeyStr){
+  if(g.planMode==='variavel') return (g.monthlyPlan && g.monthlyPlan[monthKeyStr]) || 0;
+  return g.monthlyTarget || 0;
+}
 function goalCardHtml(g,i){
   const color = colorForIndex(i+2);
-  const isPlantoes = g.type==='plantoes';
-  let current = g.current, target = g.target, pct;
-  let countInfo = '';
-  if(isPlantoes){
-    const linked = shiftsLinkedToGoal(g.id);
-    const recebidos = linked.filter(sh=>sh.status==='Recebido');
-    const previstos = linked.filter(sh=>sh.status!=='Recebido');
-    current = recebidos.reduce((s,sh)=>s+(sh.netAmount||sh.grossAmount||0),0);
-    target = (g.targetCount||0) * (g.valuePerShift||0);
-    pct = g.targetCount>0 ? Math.min(100,(recebidos.length/g.targetCount)*100) : 0;
-    countInfo = `<div class="t num">${recebidos.length} de ${g.targetCount} plantões${previstos.length?` · +${previstos.length} já marcado(s)`:''}</div>`;
-  } else {
-    pct = g.target>0 ? Math.min(100,(g.current/g.target)*100) : 0;
-  }
+  const pct = g.target>0 ? Math.min(100,(g.current/g.target)*100) : 0;
   let monthlyNeeded = null;
-  if(g.deadline && !isPlantoes){
+  if(g.deadline){
     const months = Math.max(1, Math.ceil((new Date(g.deadline)-new Date())/(1000*60*60*24*30)));
     monthlyNeeded = Math.max(0,(g.target-g.current))/months;
   }
-  const plano = g.monthlyTarget || monthlyNeeded;
   const now = new Date();
   const curKey = now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
+  const plano = goalMonthlyPlan(g, curKey) || monthlyNeeded;
   const contribMes = goalMonthlyContributed(g, curKey);
   const months6 = lastNMonthKeys(6);
   const evoVals = months6.map(m=>goalMonthlyContributed(g, m.key));
@@ -1991,21 +2015,16 @@ function goalCardHtml(g,i){
         <button class="iconbtn" onclick="openGoalModal('${g.id}')" title="Editar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M11 4H6a2 2 0 00-2 2v12a2 2 0 002 2h12a2 2 0 002-2v-5M18.5 2.5a2.1 2.1 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
         <button class="iconbtn" onclick="deleteEntry('goals','${g.id}')" title="Excluir"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6 7h12M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2m2 0v13a1 1 0 01-1 1H8a1 1 0 01-1-1V7h10z"/></svg></button>
       </div>
-      <div class="k">${g.deadline?('até '+fmtDate(g.deadline)):'meta'}${isPlantoes?' · plantões':''}</div>
+      <div class="k">${g.deadline?('até '+fmtDate(g.deadline)):'meta'}</div>
       <div class="v">${escapeHtml(g.name)}</div>
-      ${isPlantoes ? countInfo : `<div class="t num">${fmtMoney(g.current)} de ${fmtMoney(g.target)}</div>`}
+      <div class="t num">${fmtMoney(g.current)} de ${fmtMoney(g.target)}</div>
       <div class="progress-bar"><div style="width:${pct}%"></div></div>
-      <div class="meta">${pct.toFixed(0)}% concluído${isPlantoes?` · ${fmtMoney(current)} recebidos de ${fmtMoney(target)}`:(plano?` · plano: ${fmtMoney(plano)}/mês`:'')}</div>
-      ${!isPlantoes && plano ? `<div class="meta" style="color:${contribMes>=plano?'var(--mint)':'var(--amber)'}">Este mês: ${fmtMoney(contribMes)} de ${fmtMoney(plano)}</div>` : ''}
-      ${!isPlantoes ? `
-        <div class="chart-bars" style="height:32px;margin-top:10px;justify-content:flex-start;gap:4px;">
-          ${evoVals.map(v=>`<div class="bar in" style="height:${Math.max(2,(v/evoMax)*30)}px;width:8px;background:${color}" title="${fmtMoney(v)}"></div>`).join('')}
-        </div>
-        <button class="btn ghost sm" style="margin-top:10px;position:relative;" onclick="openGoalAporteModal('${g.id}')">+ Registrar aporte</button>
-      ` : `
-        <div class="meta" style="margin-top:6px;">Marque "esta meta" no formulário do plantão para contar aqui.</div>
-        <button class="btn ghost sm" style="margin-top:8px;position:relative;" onclick="showPage('trabalhos')">Ver plantões</button>
-      `}
+      <div class="meta">${pct.toFixed(0)}% concluído${plano?` · plano: ${fmtMoney(plano)}/mês${g.planMode==='variavel'?' (variável)':''}`:''}</div>
+      ${plano ? `<div class="meta" style="color:${contribMes>=plano?'var(--mint)':'var(--amber)'}">Este mês: ${fmtMoney(contribMes)} de ${fmtMoney(plano)}</div>` : ''}
+      <div class="chart-bars" style="height:32px;margin-top:10px;justify-content:flex-start;gap:4px;">
+        ${evoVals.map(v=>`<div class="bar in" style="height:${Math.max(2,(v/evoMax)*30)}px;width:8px;background:${color}" title="${fmtMoney(v)}"></div>`).join('')}
+      </div>
+      <button class="btn ghost sm" style="margin-top:10px;position:relative;" onclick="openGoalAporteModal('${g.id}')">+ Registrar aporte</button>
     </div>`;
 }
 function renderMetas(){
@@ -2018,44 +2037,45 @@ function renderMetas(){
     <div class="cards">${data.goals.length ? data.goals.map((g,i)=>goalCardHtml(g,i)).join('') : '<div class="empty">Nenhuma meta cadastrada. Que tal começar com "Reserva para residência médica"?</div>'}</div>
   `;
 }
-let goalTypeState = 'valor';
-function setGoalType(type){
-  goalTypeState = type;
-  document.getElementById('goalTypeValor').classList.toggle('on', type==='valor');
-  document.getElementById('goalTypePlantoes').classList.toggle('on', type==='plantoes');
-  document.getElementById('goalFieldsValor').style.display = type==='valor' ? 'block' : 'none';
-  document.getElementById('goalFieldsPlantoes').style.display = type==='plantoes' ? 'block' : 'none';
+let goalPlanModeState = 'fixo';
+function setGoalPlanMode(mode){
+  goalPlanModeState = mode;
+  document.getElementById('planModeFixo').classList.toggle('on', mode==='fixo');
+  document.getElementById('planModeVariavel').classList.toggle('on', mode==='variavel');
+  document.getElementById('planFieldFixo').style.display = mode==='fixo' ? 'block' : 'none';
+  document.getElementById('planFieldVariavel').style.display = mode==='variavel' ? 'block' : 'none';
 }
 function openGoalModal(id){
   const g = id ? data.goals.find(x=>x.id===id) : null;
-  goalTypeState = g ? (g.type||'valor') : 'valor';
+  goalPlanModeState = g ? (g.planMode||'fixo') : 'fixo';
   let sugestao = null;
-  if(g && g.deadline && goalTypeState==='valor'){
+  if(g && g.deadline){
     const months = Math.max(1, Math.ceil((new Date(g.deadline)-new Date())/(1000*60*60*24*30)));
     sugestao = Math.max(0,(g.target-g.current))/months;
   }
+  const now = new Date();
+  const curKey = now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
+  const curVariavelValue = g && g.monthlyPlan ? (g.monthlyPlan[curKey]||'') : '';
   openModalWith(`
     <h3>${g?'Editar meta':'Nova meta'}</h3>
     <div class="field"><label>Nome</label><input id="f_gname" value="${g?escapeHtml(g.name):''}" placeholder="Ex: Reserva para residência médica, Carro novo..."></div>
-    <div class="toggle-row">
-      <button type="button" id="goalTypeValor" class="${goalTypeState==='valor'?'on':''}" onclick="setGoalType('valor')">Valor livre</button>
-      <button type="button" id="goalTypePlantoes" class="${goalTypeState==='plantoes'?'on':''}" onclick="setGoalType('plantoes')">Quantidade de plantões</button>
-    </div>
-    <div id="goalFieldsValor" style="display:${goalTypeState==='valor'?'block':'none'};">
-      <div class="field-row">
-        <div class="field"><label>Valor alvo (R$)</label><input id="f_gtarget" type="number" step="0.01" value="${g?g.target:''}" placeholder="0,00"></div>
-        <div class="field"><label>Valor atual (R$)</label><input id="f_gcurrent" type="number" step="0.01" value="${g?g.current:0}" placeholder="0,00"></div>
-      </div>
-    </div>
-    <div id="goalFieldsPlantoes" style="display:${goalTypeState==='plantoes'?'block':'none'};">
-      <div class="field-row">
-        <div class="field"><label>Quantidade de plantões</label><input id="f_gtargetcount" type="number" step="1" value="${g&&g.targetCount?g.targetCount:''}" placeholder="Ex: 10"></div>
-        <div class="field"><label>Valor de referência por plantão (R$)</label><input id="f_gvalueper" type="number" step="0.01" value="${g&&g.valuePerShift?g.valuePerShift:''}" placeholder="Ex: 1000"></div>
-      </div>
-      <div class="infobox">O progresso conta os plantões marcados "Recebido" que você vincular a esta meta lá em Plantões & Trabalhos.</div>
+    <div class="field-row">
+      <div class="field"><label>Valor alvo (R$)</label><input id="f_gtarget" type="number" step="0.01" value="${g?g.target:''}" placeholder="0,00"></div>
+      <div class="field"><label>Valor atual (R$)</label><input id="f_gcurrent" type="number" step="0.01" value="${g?g.current:0}" placeholder="0,00"></div>
     </div>
     <div class="field"><label>Prazo (opcional)</label><input id="f_gdeadline" type="date" value="${g&&g.deadline?g.deadline:''}"></div>
-    ${goalTypeState==='valor' ? `<div class="field"><label>Quanto quer guardar por mês (opcional)</label><input id="f_gmonthly" type="number" step="0.01" value="${g&&g.monthlyTarget?g.monthlyTarget:''}" placeholder="${sugestao?('sugestão pelo prazo: '+fmtMoney(sugestao)):'0,00'}"></div>` : ''}
+    <div class="field"><label>Quanto quer guardar por mês</label></div>
+    <div class="toggle-row">
+      <button type="button" id="planModeFixo" class="${goalPlanModeState==='fixo'?'on':''}" onclick="setGoalPlanMode('fixo')">Valor único mensal</button>
+      <button type="button" id="planModeVariavel" class="${goalPlanModeState==='variavel'?'on':''}" onclick="setGoalPlanMode('variavel')">Variável mês a mês</button>
+    </div>
+    <div id="planFieldFixo" style="display:${goalPlanModeState==='fixo'?'block':'none'};">
+      <div class="field"><input id="f_gmonthly" type="number" step="0.01" value="${g&&g.monthlyTarget?g.monthlyTarget:''}" placeholder="${sugestao?('sugestão pelo prazo: '+fmtMoney(sugestao)):'0,00'}"></div>
+    </div>
+    <div id="planFieldVariavel" style="display:${goalPlanModeState==='variavel'?'block':'none'};">
+      <div class="field"><label>Meta deste mês (${now.toLocaleDateString('pt-BR',{month:'long'})})</label><input id="f_gmonthlyvar" type="number" step="0.01" value="${curVariavelValue}" placeholder="0,00"></div>
+      <div class="infobox">Como o valor é variável, ajuste este campo sempre que quiser mudar quanto pretende guardar no mês atual.</div>
+    </div>
     <div class="modal-actions">
       <button class="btn ghost" onclick="closeModal()">Cancelar</button>
       <button class="btn accent" onclick="saveGoal('${g?g.id:''}')">Salvar</button>
@@ -2064,23 +2084,20 @@ function openGoalModal(id){
 }
 function saveGoal(id){
   const name = document.getElementById('f_gname').value.trim();
+  const target = parseFloat(document.getElementById('f_gtarget').value);
+  const current = parseFloat(document.getElementById('f_gcurrent').value)||0;
   const deadline = document.getElementById('f_gdeadline').value || null;
-  if(!name){ toast('Preencha o nome da meta.'); return; }
-  let payload = { name, deadline, type: goalTypeState };
-  if(goalTypeState==='plantoes'){
-    const targetCount = parseInt(document.getElementById('f_gtargetcount').value);
-    const valuePerShift = parseFloat(document.getElementById('f_gvalueper').value)||0;
-    if(!targetCount || targetCount<=0){ toast('Preencha a quantidade de plantões.'); return; }
-    payload.targetCount = targetCount;
-    payload.valuePerShift = valuePerShift;
-    payload.target = targetCount*valuePerShift;
-    payload.current = 0; // derivado dos plantões vinculados
+  if(!name || isNaN(target) || target<=0){ toast('Preencha nome e valor alvo.'); return; }
+  const payload = { name, target, current, deadline, planMode: goalPlanModeState };
+  if(goalPlanModeState==='fixo'){
+    payload.monthlyTarget = parseFloat(document.getElementById('f_gmonthly').value) || null;
   } else {
-    const target = parseFloat(document.getElementById('f_gtarget').value);
-    const current = parseFloat(document.getElementById('f_gcurrent').value)||0;
-    const monthlyTarget = parseFloat(document.getElementById('f_gmonthly').value) || null;
-    if(isNaN(target) || target<=0){ toast('Preencha o valor alvo.'); return; }
-    payload.target = target; payload.current = current; payload.monthlyTarget = monthlyTarget;
+    const now = new Date();
+    const curKey = now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
+    const v = parseFloat(document.getElementById('f_gmonthlyvar').value) || 0;
+    const existing = (id && data.goals.find(x=>x.id===id) && data.goals.find(x=>x.id===id).monthlyPlan) || {};
+    payload.monthlyPlan = Object.assign({}, existing, {[curKey]: v});
+    payload.monthlyTarget = null;
   }
   if(id){ Object.assign(data.goals.find(x=>x.id===id), payload); }
   else{ data.goals.push(Object.assign({id: uid(), contributions: []}, payload)); }
@@ -2243,74 +2260,6 @@ function launchSubPayment(id){
     accountId: s.accountId||'', notes:'Lançado a partir de Assinaturas'
   });
   renderAll(); scheduleSave(); toast('Pagamento lançado em Lançamentos.');
-}
-
-/* =========================================================
-   RENDER: IMPOSTOS
-========================================================= */
-function renderImpostos(){
-  const el = document.getElementById('page-impostos');
-  const list = [...data.taxes].sort((a,b)=>(b.competency||'').localeCompare(a.competency||''));
-  el.innerHTML = `
-    <div class="page-head">
-      <div><h1>Impostos</h1><p>${list.length} registro(s)</p></div>
-      <button class="btn accent" onclick="openTaxModal()">+ Novo registro</button>
-    </div>
-    <div class="disclaimer">Estimativa para organização financeira pessoal. Não substitui orientação de um contador ou profissional tributário.</div>
-    <div class="ledger">
-      ${list.length ? list.map(t=>`
-        <div class="row" style="--accent:${colorForString(t.incomeType)}">
-          <div class="date">${t.competency||'—'}</div>
-          <div class="desc"><div class="t">${t.incomeType} ${t.notes?'· '+escapeHtml(t.notes):''}</div></div>
-          <span class="badge outline">${t.status}</span>
-          <div class="acc">venc. ${fmtDate(t.dueDate)}</div>
-          <div class="amt num neg">${fmtMoney(t.estimatedTax)}</div>
-          <div class="actions">
-            <button class="iconbtn" onclick="openTaxModal('${t.id}')" title="Editar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M11 4H6a2 2 0 00-2 2v12a2 2 0 002 2h12a2 2 0 002-2v-5M18.5 2.5a2.1 2.1 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
-            <button class="iconbtn" onclick="deleteEntry('taxes','${t.id}')" title="Excluir"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6 7h12M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2m2 0v13a1 1 0 01-1 1H8a1 1 0 01-1-1V7h10z"/></svg></button>
-          </div>
-        </div>`).join('') : '<div class="empty">Nenhum registro de imposto ainda.</div>'}
-    </div>
-  `;
-}
-function openTaxModal(id){
-  const t = id ? data.taxes.find(x=>x.id===id) : null;
-  openModalWith(`
-    <h3>${t?'Editar registro':'Novo registro de imposto'}</h3>
-    <div class="field-row">
-      <div class="field"><label>Tipo de renda</label><select id="f_ttype">${TAX_INCOME_TYPES.map(x=>`<option ${t&&t.incomeType===x?'selected':''}>${x}</option>`).join('')}</select></div>
-      <div class="field"><label>Competência (mês/ano)</label><input id="f_tcomp" type="month" value="${t?t.competency||'':new Date().toISOString().slice(0,7)}"></div>
-    </div>
-    <div class="field-row">
-      <div class="field"><label>Valor bruto (R$)</label><input id="f_tgross" type="number" step="0.01" value="${t?t.grossAmount||'':''}"></div>
-      <div class="field"><label>Imposto estimado (R$)</label><input id="f_test" type="number" step="0.01" value="${t?t.estimatedTax||'':''}"></div>
-    </div>
-    <div class="field-row">
-      <div class="field"><label>Vencimento</label><input id="f_tdue" type="date" value="${t&&t.dueDate?t.dueDate:''}"></div>
-      <div class="field"><label>Status</label><select id="f_tstatus"><option ${!t||t.status==='Pendente'?'selected':''}>Pendente</option><option ${t&&t.status==='Pago'?'selected':''}>Pago</option></select></div>
-    </div>
-    <div class="field"><label>Valor pago (R$)</label><input id="f_tpaid" type="number" step="0.01" value="${t?t.paidAmount||'':''}"></div>
-    <div class="field"><label>Observações</label><input id="f_tnotes" value="${t?escapeHtml(t.notes||''):''}"></div>
-    <div class="modal-actions">
-      <button class="btn ghost" onclick="closeModal()">Cancelar</button>
-      <button class="btn accent" onclick="saveTax('${t?t.id:''}')">Salvar</button>
-    </div>
-  `);
-}
-function saveTax(id){
-  const payload = {
-    incomeType: document.getElementById('f_ttype').value,
-    competency: document.getElementById('f_tcomp').value,
-    grossAmount: parseFloat(document.getElementById('f_tgross').value)||0,
-    estimatedTax: parseFloat(document.getElementById('f_test').value)||0,
-    dueDate: document.getElementById('f_tdue').value||null,
-    status: document.getElementById('f_tstatus').value,
-    paidAmount: parseFloat(document.getElementById('f_tpaid').value)||0,
-    notes: document.getElementById('f_tnotes').value.trim(),
-  };
-  if(id){ Object.assign(data.taxes.find(x=>x.id===id), payload); }
-  else{ data.taxes.push(Object.assign({id:uid()}, payload)); }
-  closeModal(); renderAll(); scheduleSave(); toast('Registro salvo.');
 }
 
 /* =========================================================
@@ -2922,10 +2871,10 @@ function renderTutorial(){
     ${tutoSection('Plantões & Trabalhos', `
       <p>Área específica para sua atividade médica — mais detalhada que um lançamento comum.</p>
       <ul>
-        <li>Registre local, tipo de trabalho, horas, valor bruto/líquido, pagador e status (Previsto, Recebido, Atrasado). O campo <b>Tipo de contrato</b> (Plantão, Clínica da família, Outro) separa o que é plantão do trabalho fixo.</li>
+        <li>Registre local, tipo de trabalho, período (☀️ dia / 🌙 noite), horas, valor bruto/líquido, pagador e status: <b>Previsto</b>, <b>Recebido</b>, <b>Parcial</b> (você recebeu só uma parte — informe o valor já recebido, e o restante continua contando como pendente) ou <b>Atrasado</b>. O campo <b>Tipo de contrato</b> (Plantão, Clínica da família, Outro) separa o que é plantão do trabalho fixo.</li>
         <li>O app calcula sozinho: quantidade de plantões, horas trabalhadas, receita recebida, <b>média por plantão</b> e <b>média por hora</b>, e valores pendentes.</li>
         <li>A tabela <b>"Quanto vou receber por mês"</b> mostra a previsão de recebimento só dos plantões (sem a clínica), mês a mês, usando a data prevista de pagamento.</li>
-        <li>Plantões com status "Recebido" já entram automaticamente como receita — aparecem no Painel, no DRE e também nas abas <b>Lançamentos</b> e <b>Receitas</b>, marcados com um selo. Não precisa duplicar lançando de novo; para editar ou excluir, faça isso aqui em Plantões (o botão de editar nessas linhas te traz direto pra cá).</li>
+        <li>Plantões com status "Recebido" ou "Parcial" já entram automaticamente como receita — aparecem no Painel, no DRE e também nas abas <b>Lançamentos</b> e <b>Receitas</b>, marcados com um selo. Não precisa duplicar lançando de novo; para editar ou excluir, faça isso aqui em Plantões (o botão de editar nessas linhas te traz direto pra cá).</li>
         <li>Quando você começar o CLT, pode registrar a remuneração aqui também, sem precisar de uma área nova.</li>
       </ul>
     `)}
@@ -2933,15 +2882,19 @@ function renderTutorial(){
     ${tutoSection('Agenda de Plantões', `
       <p>Pensada pra quando alguém te oferece um plantão e você precisa checar rápido se tem disponibilidade.</p>
       <ul>
-        <li><b>Disponibilidade semanal</b>: marque Manhã/Tarde/Noite disponíveis para cada dia da semana (ex: quarta de day off, fins de semana, algumas noites). É um padrão editável a qualquer momento.</li>
-        <li><b>Calendário</b>: dias com fundo esverdeado indicam que aquele dia da semana costuma estar livre; uma bolinha indica que já existe um plantão marcado naquela data específica.</li>
+        <li><b>Disponibilidade semanal</b>: marque ☀️ Manhã/Tarde e 🌙 Noite disponíveis para cada dia da semana (ex: quarta de day off, fins de semana, algumas noites). É um padrão editável a qualquer momento, e fica minimizado por padrão.</li>
+        <li><b>Indisponibilidade manual</b>: clique num dia específico e depois em "Marcar este dia como indisponível" (com motivo opcional) — útil pra um imprevisto pontual, sem precisar mudar o padrão semanal inteiro. Dá pra remover a qualquer momento.</li>
+        <li><b>Calendário</b> começa na segunda-feira. Fundo esverdeado com ☀️/🌙 indica disponibilidade; fundo violeta indica que já existe um plantão marcado naquela data (e, se só um período estiver ocupado, o outro continua aparecendo como livre); fundo avermelhado com 🚫 indica indisponibilidade marcada manualmente.</li>
         <li>Clique em qualquer dia para ver o detalhe e, se quiser, clicar em <b>"Registrar plantão neste dia"</b> — abre o formulário já com a data preenchida.</li>
       </ul>
     `)}
 
     ${tutoSection('Orçamento', `
-      <p>Sugere um limite de gasto por categoria com base na <b>média dos últimos 3 meses</b> — você não precisa definir tudo do zero.</p>
-      <p>Cada valor sugerido é editável (clique e digite o seu). A tabela mostra realizado, diferença e % utilizado no mês atual. No fim da página, uma <b>faixa de aporte mensal sugerida</b> é calculada a partir da sua renda e gastos essenciais reais — é uma ferramenta de planejamento, não uma recomendação financeira.</p>
+      <p>Foi simplificado pra ser direto ao ponto, com duas partes:</p>
+      <ul>
+        <li><b>Quanto posso gastar este mês</b>: acompanhamento em tempo real — receita do mês, menos o que você já guardou (metas + investimentos), menos despesas fixas, menos gastos variáveis já feitos. O número final vai diminuindo conforme você lança gastos ao longo do mês.</li>
+        <li><b>% projetado x realizado</b>: compara a porcentagem da sua renda que você planeja gastar com essenciais, não essenciais e investimentos contra o que de fato aconteceu no mês, com base na classificação que você já faz ao lançar cada despesa. Se houver despesas sem essa classificação, o app avisa.</li>
+      </ul>
     `)}
 
     ${tutoSection('DRE', `
@@ -2959,17 +2912,12 @@ function renderTutorial(){
     `)}
 
     ${tutoSection('Metas e Reserva de emergência', `
-      <p><b>Metas</b> tem dois tipos:</p>
-      <ul>
-        <li><b>Valor livre</b>: valor alvo, valor atual, prazo opcional (o app sugere o aporte mensal necessário), plano mensal editável e botão "+ Registrar aporte" com evolução dos últimos 6 meses.</li>
-        <li><b>Quantidade de plantões</b>: você define quantos plantões quer fazer e o valor de referência de cada um (ex: 10 plantões de R$ 1.000 pra comprar o carro). O progresso conta automaticamente os plantões que você marcar como "Recebido" e vincular a essa meta lá em Plantões & Trabalhos (campo "Meta vinculada").</li>
-      </ul>
+      <p><b>Metas</b>: valor alvo, valor atual e prazo opcional (o app sugere o aporte mensal necessário). O plano mensal pode ser um <b>valor único</b> (mesmo valor todo mês) ou <b>variável</b> (você ajusta mês a mês). Use "+ Registrar aporte" para acompanhar a evolução dos últimos 6 meses.</p>
       <p><b>Reserva de emergência</b> é calculada de um jeito específico: você escolhe quantos meses de cobertura quer (3/6/9/12), e o app multiplica isso pelo seu <b>gasto essencial médio real</b> dos últimos meses. Marque uma conta como "esta é minha reserva" (em Contas) ou um investimento com objetivo "Reserva de emergência" para que o valor conte automaticamente aqui.</p>
     `)}
 
-    ${tutoSection('Assinaturas, Impostos e Contas', `
+    ${tutoSection('Assinaturas e Contas', `
       <p><b>Assinaturas</b>: cadastre gastos recorrentes (Caveo, Wellhub, seguro...) e veja o custo mensal/anual total. O botão "Lançar pagamento agora" cria o lançamento correspondente sem precisar preencher tudo de novo.</p>
-      <p><b>Impostos</b>: registros por tipo de renda (PF, RPA, CLT, PJ) com valor estimado, vencimento e status — sempre como estimativa para organização pessoal, não substitui contador.</p>
       <p><b>Contas</b>: cadastro de bancos e cartões. O saldo é calculado automaticamente: você define um "saldo inicial" numa data, e o app soma tudo que você lançar naquela conta a partir dali (receitas, despesas, aportes, transferências, plantões recebidos). Se o número divergir do seu banco real (por algo não lançado), abra a conta e "reconcilie": atualize o saldo inicial e a data para hoje.</p>
     `)}
 
@@ -3034,7 +2982,6 @@ function renderAll(){
   renderMetas();
   renderReserva();
   renderAssinaturas();
-  renderImpostos();
   renderRegras();
   renderCategorias();
   renderContas();
