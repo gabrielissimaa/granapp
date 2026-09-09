@@ -241,9 +241,11 @@
   .agenda-cell.empty{border:none;cursor:default;background:none;}
   .agenda-cell.avail{background:rgba(0,230,160,0.10);border-color:rgba(0,230,160,0.28);}
   .agenda-cell.unavail{opacity:.5;}
+  .agenda-cell.hasshift{background:rgba(139,108,255,0.18);border-color:rgba(139,108,255,0.45);opacity:1;}
   .agenda-cell.today{box-shadow:0 0 0 2px var(--violet);}
   .agenda-daynum{font-weight:600;color:var(--text);}
-  .agenda-dot{position:absolute;bottom:5px;width:6px;height:6px;border-radius:50%;background:var(--mint);}
+  .agenda-icons{font-size:9.5px;line-height:1;margin-top:1px;letter-spacing:-1px;}
+  .agenda-dot{position:absolute;bottom:4px;width:6px;height:6px;border-radius:50%;background:var(--violet);}
 
   @media print{
     body{background:#fff !important;color:#111 !important;}
@@ -1321,7 +1323,7 @@ function renderTrabalhos(){
 
     ${forecastRows.length ? `
     <section class="block">
-      <div class="block-head"><h3>Quanto vou receber por mês (plantões)</h3></div>
+      <div class="block-head"><h3>Quanto vou receber por mês (plantões, sem contar a clínica)</h3></div>
       <div class="panel" style="overflow-x:auto;">
         <table class="datatable">
           <thead><tr><th>Mês</th><th style="text-align:right;">Ainda a receber</th><th style="text-align:right;">Já recebido</th><th style="text-align:right;">Total do mês</th></tr></thead>
@@ -1412,23 +1414,27 @@ function updateAvailabilityNote(dow, value){
   data.availability.weekTemplate[dow].note = value;
   scheduleSave();
 }
+function onAvailabilityDetailsToggle(el){ availabilityEditorOpen = el.open; }
+let availabilityEditorOpen = false;
 function renderAvailabilityEditor(){
   return `
-    <div class="panel" style="margin-bottom:22px;">
-      <div class="block-head" style="margin-bottom:10px;"><h3>Disponibilidade semanal (padrão)</h3></div>
-      <p style="color:var(--text-muted);font-size:12.5px;margin:0 0 14px 0;">Marque os períodos em que costuma estar livre para plantão. Isso é só um padrão — pode mudar quando quiser, e cada dia específico ainda pode ter um plantão marcado por cima.</p>
-      ${WEEKDAY_NAMES.map((name,dow)=>{
-        const a = data.availability.weekTemplate[dow];
-        return `
-        <div style="display:flex;align-items:center;gap:8px;padding:9px 0;border-bottom:1px solid var(--border);flex-wrap:wrap;">
-          <div style="width:86px;font-size:13px;color:var(--text);flex-shrink:0;">${name}</div>
-          <button class="btn ${a.manha?'accent':'ghost'} sm" onclick="toggleAvailability(${dow},'manha')">Manhã</button>
-          <button class="btn ${a.tarde?'accent':'ghost'} sm" onclick="toggleAvailability(${dow},'tarde')">Tarde</button>
-          <button class="btn ${a.noite?'accent':'ghost'} sm" onclick="toggleAvailability(${dow},'noite')">Noite</button>
-          <input style="flex:1;min-width:120px;background:var(--surface);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:7px;font-size:12px;" placeholder="nota (opcional)" value="${escapeHtml(a.note||'')}" onchange="updateAvailabilityNote(${dow}, this.value)">
-        </div>`;
-      }).join('')}
-    </div>
+    <details class="tuto-section" style="margin-bottom:22px;max-width:none;" ${availabilityEditorOpen?'open':''} ontoggle="onAvailabilityDetailsToggle(this)">
+      <summary>Disponibilidade semanal (padrão)<span class="plus">+</span></summary>
+      <div class="tuto-body">
+        <p style="color:var(--text-muted);font-size:12.5px;margin:0 0 14px 0;">Marque os períodos em que costuma estar livre para plantão. Isso é só um padrão — pode mudar quando quiser, e cada dia específico ainda pode ter um plantão marcado por cima.</p>
+        ${WEEKDAY_NAMES.map((name,dow)=>{
+          const a = data.availability.weekTemplate[dow];
+          return `
+          <div style="display:flex;align-items:center;gap:8px;padding:9px 0;border-bottom:1px solid var(--border);flex-wrap:wrap;">
+            <div style="width:86px;font-size:13px;color:var(--text);flex-shrink:0;">${name}</div>
+            <button class="btn ${a.manha?'accent':'ghost'} sm" onclick="toggleAvailability(${dow},'manha')">☀️ Manhã</button>
+            <button class="btn ${a.tarde?'accent':'ghost'} sm" onclick="toggleAvailability(${dow},'tarde')">☀️ Tarde</button>
+            <button class="btn ${a.noite?'accent':'ghost'} sm" onclick="toggleAvailability(${dow},'noite')">🌙 Noite</button>
+            <input style="flex:1;min-width:120px;background:var(--surface);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:7px;font-size:12px;" placeholder="nota (opcional)" value="${escapeHtml(a.note||'')}" onchange="updateAvailabilityNote(${dow}, this.value)">
+          </div>`;
+        }).join('')}
+      </div>
+    </details>
   `;
 }
 function renderAgendaCalendar(){
@@ -1448,13 +1454,21 @@ function renderAgendaCalendar(){
     const dateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
     const dow = new Date(year,month,d).getDay();
     const avail = data.availability.weekTemplate[dow];
-    const isAvail = avail.manha || avail.tarde || avail.noite;
+    const hasDay = avail.manha || avail.tarde;
+    const hasNight = avail.noite;
+    const isAvail = hasDay || hasNight;
     const shiftsOnDay = data.shifts.filter(sh=>sh.date===dateStr);
+    const hasShift = shiftsOnDay.length>0;
     const isToday = dateStr===todayStrVal;
+    const cellClass = hasShift ? 'hasshift' : (isAvail ? 'avail' : 'unavail');
+    let icons = '';
+    if(hasDay) icons += '☀️';
+    if(hasNight) icons += '🌙';
     html += `
-      <div class="agenda-cell ${isAvail?'avail':'unavail'} ${isToday?'today':''}" onclick="openDayModal('${dateStr}')">
+      <div class="agenda-cell ${cellClass} ${isToday?'today':''}" onclick="openDayModal('${dateStr}')">
         <div class="agenda-daynum">${d}</div>
-        ${shiftsOnDay.length ? `<div class="agenda-dot"></div>` : ''}
+        ${icons ? `<div class="agenda-icons">${icons}</div>` : ''}
+        ${hasShift ? `<div class="agenda-dot"></div>` : ''}
       </div>`;
   });
   html += '</div>';
@@ -1477,7 +1491,7 @@ function renderAgenda(){
       </div>
       <div class="panel">
         ${renderAgendaCalendar()}
-        <div class="legend" style="margin-top:14px;"><span><i style="background:rgba(0,230,160,0.35)"></i>Disponível (algum período)</span><span><i style="background:var(--mint)"></i>Já tem plantão marcado</span></div>
+        <div class="legend" style="margin-top:14px;"><span><i style="background:rgba(0,230,160,0.35)"></i>Disponível (☀️ dia · 🌙 noite)</span><span><i style="background:var(--violet)"></i>Já tem plantão marcado</span></div>
       </div>
     </section>
   `;
@@ -1495,15 +1509,16 @@ function openDayModal(dateStr){
   openModalWith(`
     <h3>${WEEKDAY_NAMES[dow]}, ${fmtDate(dateStr)}</h3>
     <div class="chipgrid" style="margin-bottom:16px;">
-      <div class="chip"><div class="lbl">Manhã</div><div class="val" style="color:${avail.manha?'var(--mint)':'var(--text-muted)'}">${avail.manha?'Disponível':'Ocupada'}</div></div>
-      <div class="chip"><div class="lbl">Tarde</div><div class="val" style="color:${avail.tarde?'var(--mint)':'var(--text-muted)'}">${avail.tarde?'Disponível':'Ocupada'}</div></div>
-      <div class="chip"><div class="lbl">Noite</div><div class="val" style="color:${avail.noite?'var(--mint)':'var(--text-muted)'}">${avail.noite?'Disponível':'Ocupada'}</div></div>
+      <div class="chip"><div class="lbl">☀️ Manhã</div><div class="val" style="color:${avail.manha?'var(--mint)':'var(--text-muted)'}">${avail.manha?'Disponível':'Ocupada'}</div></div>
+      <div class="chip"><div class="lbl">☀️ Tarde</div><div class="val" style="color:${avail.tarde?'var(--mint)':'var(--text-muted)'}">${avail.tarde?'Disponível':'Ocupada'}</div></div>
+      <div class="chip"><div class="lbl">🌙 Noite</div><div class="val" style="color:${avail.noite?'var(--mint)':'var(--text-muted)'}">${avail.noite?'Disponível':'Ocupada'}</div></div>
     </div>
+    ${shiftsOnDay.length ? `<div class="infobox" style="margin-bottom:14px;">Este dia já tem ${shiftsOnDay.length} plantão(ões) marcado(s) — considere isso antes de confirmar mais um.</div>` : ''}
     ${avail.note ? `<p style="color:var(--text-muted);font-size:12.5px;margin:-8px 0 14px 0;">${escapeHtml(avail.note)}</p>` : ''}
     ${shiftsOnDay.length ? `
       <div class="ledger" style="margin-bottom:16px;">
         ${shiftsOnDay.map(sh=>`
-          <div class="row"><div class="desc"><div class="t">${escapeHtml(sh.location||sh.contractType||'Plantão')}</div></div><span class="badge outline">${sh.status}</span><div class="amt num pos">${fmtMoney(sh.netAmount||sh.grossAmount||0)}</div></div>`).join('')}
+          <div class="row" style="--accent:var(--violet)"><div class="desc"><div class="t">${escapeHtml(sh.location||sh.contractType||'Plantão')}</div></div><span class="badge outline">${sh.status}</span><div class="amt num pos">${fmtMoney(sh.netAmount||sh.grossAmount||0)}</div></div>`).join('')}
       </div>` : '<div class="empty" style="padding:6px 0 16px 0;">Nenhum plantão registrado neste dia ainda.</div>'}
     <div class="modal-actions">
       <button class="btn ghost" onclick="closeModal()">Fechar</button>
