@@ -361,6 +361,7 @@ let data = {
   budgetOverrides: {},
   categories: [],      // {id, name, group: 'pessoal'|'profissional'} — editável pelo usuário
   availability: null,  // disponibilidade semanal para plantões
+  shiftGoal: null,      // meta de quantidade de plantões (Agenda)
   settings: { emergencyMonths: 6 }
 };
 let loaded = false;
@@ -399,6 +400,9 @@ function ensureAvailabilitySeeded(){
     };
   }
   if(!data.availability.exceptions) data.availability.exceptions = {};
+}
+function ensureShiftGoalSeeded(){
+  if(!data.shiftGoal) data.shiftGoal = { enabled:false, targetCount:null, deadline:null, targetPerMonth:null };
 }
 function categoryNames(group){
   if(!data.categories) return [];
@@ -586,7 +590,7 @@ async function loadData(){
       data = Object.assign(structuredCloneSafe(data), cached.data);
     }
   }catch(e){}
-  ensureCategoriesSeeded(); ensureAccountBalanceDatesSeeded(); ensureAvailabilitySeeded();
+  ensureCategoriesSeeded(); ensureAccountBalanceDatesSeeded(); ensureAvailabilitySeeded(); ensureShiftGoalSeeded();
   loaded = true;
   renderAll();
   setSync(navigator.onLine ? 'warn' : 'bad');
@@ -599,7 +603,7 @@ async function loadData(){
         const remoteUpdatedAt = new Date(row.updated_at).getTime();
         if(remoteUpdatedAt >= localUpdatedAt){
           data = Object.assign(structuredCloneSafe(data), row.data);
-          ensureCategoriesSeeded(); ensureAccountBalanceDatesSeeded(); ensureAvailabilitySeeded();
+          ensureCategoriesSeeded(); ensureAccountBalanceDatesSeeded(); ensureAvailabilitySeeded(); ensureShiftGoalSeeded();
           await idbSet('app-data', {data, updatedAt: remoteUpdatedAt});
           renderAll();
         }
@@ -1055,7 +1059,7 @@ function renderAnaliseFinanceira(){
 /* =========================================================
    RENDER: LANÇAMENTOS
 ========================================================= */
-let lancFilter = { type:'all', purpose:'all', essential:'all', fixedVariable:'all', accountId:'all', unclassified:false };
+let lancFilter = { type:'all', purpose:'all', essential:'all', fixedVariable:'all', accountId:'all', unclassified:false, dateStart:'', dateEnd:'' };
 function shiftAsVirtualTx(sh){
   const ct = sh.contractType || 'Plantão';
   return {
@@ -1103,6 +1107,8 @@ function renderLancamentos(){
   if(lancFilter.fixedVariable!=='all') list = list.filter(t=>t.fixedVariable===lancFilter.fixedVariable);
   if(lancFilter.accountId!=='all') list = list.filter(t=>t.accountId===lancFilter.accountId);
   if(lancFilter.unclassified) list = list.filter(t=>t.type==='despesa' && (!t.category || t.category==='A classificar'));
+  if(lancFilter.dateStart) list = list.filter(t=>t.date>=lancFilter.dateStart);
+  if(lancFilter.dateEnd) list = list.filter(t=>t.date<=lancFilter.dateEnd);
   list.sort((a,b)=>b.date.localeCompare(a.date));
 
   el.innerHTML = `
@@ -1116,6 +1122,8 @@ function renderLancamentos(){
       <select id="fEssential"><option value="all">Essencial/Não</option><option value="essencial">Essencial</option><option value="nao-essencial">Não essencial</option></select>
       <select id="fFixed"><option value="all">Fixo/Variável</option><option value="fixo">Fixo</option><option value="variavel">Variável</option></select>
       <select id="fAccount"><option value="all">Todas as contas</option>${data.accounts.map(a=>`<option value="${a.id}">${escapeHtml(a.name)}</option>`).join('')}</select>
+      <label style="display:flex;align-items:center;gap:6px;color:var(--text-muted);font-size:12.5px;">De <input type="date" id="fDateStart" style="padding:6px 8px;"></label>
+      <label style="display:flex;align-items:center;gap:6px;color:var(--text-muted);font-size:12.5px;">até <input type="date" id="fDateEnd" style="padding:6px 8px;"></label>
       <label style="display:flex;align-items:center;gap:6px;color:var(--text-muted);font-size:12.5px;"><input type="checkbox" id="fUnclass"> só "a classificar"</label>
     </div>
     <div class="ledger">
@@ -1127,12 +1135,16 @@ function renderLancamentos(){
   document.getElementById('fEssential').value = lancFilter.essential;
   document.getElementById('fFixed').value = lancFilter.fixedVariable;
   document.getElementById('fAccount').value = lancFilter.accountId;
+  document.getElementById('fDateStart').value = lancFilter.dateStart;
+  document.getElementById('fDateEnd').value = lancFilter.dateEnd;
   document.getElementById('fUnclass').checked = lancFilter.unclassified;
   document.getElementById('fType').addEventListener('change',e=>{lancFilter.type=e.target.value;renderLancamentos();});
   document.getElementById('fPurpose').addEventListener('change',e=>{lancFilter.purpose=e.target.value;renderLancamentos();});
   document.getElementById('fEssential').addEventListener('change',e=>{lancFilter.essential=e.target.value;renderLancamentos();});
   document.getElementById('fFixed').addEventListener('change',e=>{lancFilter.fixedVariable=e.target.value;renderLancamentos();});
   document.getElementById('fAccount').addEventListener('change',e=>{lancFilter.accountId=e.target.value;renderLancamentos();});
+  document.getElementById('fDateStart').addEventListener('change',e=>{lancFilter.dateStart=e.target.value;renderLancamentos();});
+  document.getElementById('fDateEnd').addEventListener('change',e=>{lancFilter.dateEnd=e.target.value;renderLancamentos();});
   document.getElementById('fUnclass').addEventListener('change',e=>{lancFilter.unclassified=e.target.checked;renderLancamentos();});
 }
 
@@ -1516,12 +1528,83 @@ function renderAgendaCalendar(){
   html += '</div>';
   return html;
 }
+function ensureShiftGoalSeeded(){
+  if(!data.shiftGoal) data.shiftGoal = { enabled:false, targetCount:null, deadline:null, monthlyRate:null, startDate:null };
+}
+function computeShiftGoalProgress(){
+  const sg = data.shiftGoal;
+  if(!sg || !sg.enabled) return null;
+  const startDate = sg.startDate || todayStr();
+  const isPlantao = sh => (sh.contractType||'Plantão') === 'Plantão';
+  const doneShifts = data.shifts.filter(sh=> isPlantao(sh) && (sh.status==='Recebido'||sh.status==='Parcial') && sh.date>=startDate && (!sg.deadline || sh.date<=sg.deadline));
+  const count = doneShifts.length;
+  const now = new Date();
+  const start = new Date(startDate+'T00:00:00');
+  const monthsElapsed = Math.max(1, (now.getFullYear()-start.getFullYear())*12 + (now.getMonth()-start.getMonth()) + 1);
+  const avgPerMonth = count/monthsElapsed;
+  let pctByCount=null, remaining=null, monthsLeft=null, paceNeeded=null;
+  if(sg.targetCount){
+    pctByCount = Math.min(100,(count/sg.targetCount)*100);
+    remaining = Math.max(0, sg.targetCount-count);
+    if(sg.deadline){
+      const dl = new Date(sg.deadline+'T00:00:00');
+      monthsLeft = Math.max(1, Math.ceil((dl-now)/(1000*60*60*24*30)));
+      paceNeeded = remaining/monthsLeft;
+    }
+  }
+  return { count, avgPerMonth, pctByCount, remaining, monthsLeft, paceNeeded, targetCount:sg.targetCount, monthlyRate:sg.monthlyRate, deadline:sg.deadline };
+}
+function setShiftGoalEnabled(v){
+  data.shiftGoal.enabled = v;
+  if(v && !data.shiftGoal.startDate) data.shiftGoal.startDate = todayStr();
+  renderAgenda(); scheduleSave();
+}
+function updateShiftGoalField(field, value){
+  data.shiftGoal[field] = field==='deadline' ? (value||null) : (parseFloat(value)||null);
+  scheduleSave();
+  renderAgenda();
+}
+function onShiftGoalDetailsToggle(el){ shiftGoalEditorOpen = el.open; }
+let shiftGoalEditorOpen = false;
+function renderShiftGoalSection(){
+  const sg = data.shiftGoal;
+  const progress = computeShiftGoalProgress();
+  return `
+    <details class="tuto-section" style="margin-bottom:22px;max-width:none;" ${shiftGoalEditorOpen?'open':''} ontoggle="onShiftGoalDetailsToggle(this)">
+      <summary>Meta de plantões<span class="plus">+</span></summary>
+      <div class="tuto-body">
+        <p style="color:var(--text-muted);font-size:12.5px;margin:0 0 12px 0;">Deseja estabelecer uma meta de plantões? Informe quantos, até quando e/ou quantos por mês, para ter noção da quantidade num período de tempo.</p>
+        <div class="toggle-row" style="max-width:200px;margin-bottom:14px;">
+          <button class="${!sg.enabled?'on':''}" onclick="setShiftGoalEnabled(false)">Não</button>
+          <button class="${sg.enabled?'on':''}" onclick="setShiftGoalEnabled(true)">Sim</button>
+        </div>
+        ${sg.enabled ? `
+          <div class="field-row">
+            <div class="field"><label>Quantos plantões</label><input type="number" step="1" value="${sg.targetCount||''}" placeholder="Ex: 10" onchange="updateShiftGoalField('targetCount', this.value)"></div>
+            <div class="field"><label>Até quando (opcional)</label><input type="date" value="${sg.deadline||''}" onchange="updateShiftGoalField('deadline', this.value)"></div>
+          </div>
+          <div class="field" style="max-width:220px;"><label>E/ou quantos por mês</label><input type="number" step="1" value="${sg.monthlyRate||''}" placeholder="Ex: 4" onchange="updateShiftGoalField('monthlyRate', this.value)"></div>
+          ${progress ? `
+            <div class="chipgrid" style="margin-top:14px;">
+              <div class="chip"><div class="lbl">Feitos até agora</div><div class="val">${progress.count}${progress.targetCount?` de ${progress.targetCount}`:''}</div></div>
+              <div class="chip"><div class="lbl">Ritmo atual</div><div class="val">${progress.avgPerMonth.toFixed(1)}/mês</div></div>
+              ${progress.paceNeeded!=null ? `<div class="chip"><div class="lbl">Ritmo necessário até o prazo</div><div class="val" style="color:${progress.avgPerMonth>=progress.paceNeeded?'var(--mint)':'var(--amber)'}">${progress.paceNeeded.toFixed(1)}/mês</div></div>` : ''}
+              ${progress.monthlyRate ? `<div class="chip"><div class="lbl">Meta de ritmo</div><div class="val" style="color:${progress.avgPerMonth>=progress.monthlyRate?'var(--mint)':'var(--amber)'}">${progress.monthlyRate}/mês</div></div>` : ''}
+            </div>
+            ${progress.pctByCount!=null ? `<div class="progress-bar" style="margin-top:12px;"><div style="width:${progress.pctByCount}%"></div></div><div class="meta" style="margin-top:4px;">${progress.pctByCount.toFixed(0)}% concluído</div>` : ''}
+          ` : `<div class="infobox" style="margin-top:10px;">Marque plantões como "Recebido" ou "Parcial" (tipo de contrato "Plantão") para o progresso começar a contar.</div>`}
+        ` : ''}
+      </div>
+    </details>
+  `;
+}
 function renderAgenda(){
   const el = document.getElementById('page-agenda');
   const monthLabel = new Date(agendaState.year, agendaState.month, 1).toLocaleDateString('pt-BR',{month:'long',year:'numeric'});
   el.innerHTML = `
     <div class="page-head"><div><h1>Agenda de Plantões</h1><p>Sua disponibilidade padrão e os plantões já marcados</p></div></div>
     ${renderAvailabilityEditor()}
+    ${renderShiftGoalSection()}
     <section class="block">
       <div class="block-head">
         <h3>Calendário</h3>
@@ -1625,6 +1708,23 @@ function renderOrcamento(){
   const targets = data.settings.budgetTargets || {essencial:50, naoEssencial:30, investido:20};
   const semClassificar = data.transactions.filter(t=>t.type==='despesa' && inRange(t.date,curRange) && !t.essential).length;
 
+  // Histórico dos últimos meses (efetivo x deveria ser)
+  const historyMonths = lastNMonthKeys(6);
+  const historyRows = historyMonths.map(m=>{
+    const r = rangeForPeriod('custom', m.key+'-01', new Date(m.year,m.month+1,0).toISOString().slice(0,10));
+    const rec = receitasInRange(r);
+    const ess = despesasInRange(r, t=>t.essential==='essencial');
+    const nao = despesasInRange(r, t=>t.essential==='nao-essencial');
+    const inv = investidoInRange(r);
+    return {
+      label: m.label,
+      pctEss: rec>0 ? (ess/rec)*100 : null,
+      pctNao: rec>0 ? (nao/rec)*100 : null,
+      pctInv: rec>0 ? (inv/rec)*100 : null,
+      hasData: rec>0,
+    };
+  }).filter(r=>r.hasData);
+
   el.innerHTML = `
     <div class="page-head"><div><h1>Orçamento</h1><p>Acompanhamento do mês atual</p></div></div>
 
@@ -1675,6 +1775,27 @@ function renderOrcamento(){
         ${semClassificar>0 ? `<div class="disclaimer" style="margin-top:14px;">${semClassificar} despesa(s) deste mês ainda não têm classificação essencial/não essencial — o % realizado fica incompleto até você classificar. Veja em Lançamentos (filtro "a classificar").</div>` : ''}
       </div>
     </section>
+
+    ${historyRows.length ? `
+    <section class="block">
+      <div class="block-head"><h3>Como tem se encaminhado (últimos meses)</h3></div>
+      <div class="panel" style="max-width:640px;overflow-x:auto;">
+        <table class="datatable">
+          <thead><tr><th>Mês</th><th style="text-align:right;">Essencial</th><th style="text-align:right;">Não essencial</th><th style="text-align:right;">Investimento</th></tr></thead>
+          <tbody>
+            ${historyRows.map(r=>`
+              <tr>
+                <td style="text-transform:capitalize;">${r.label}</td>
+                <td class="num" style="text-align:right;color:${r.pctEss>targets.essencial?'var(--coral)':'var(--mint)'}">${r.pctEss.toFixed(0)}%</td>
+                <td class="num" style="text-align:right;color:${r.pctNao>targets.naoEssencial?'var(--coral)':'var(--mint)'}">${r.pctNao.toFixed(0)}%</td>
+                <td class="num" style="text-align:right;color:${r.pctInv<targets.investido?'var(--amber)':'var(--mint)'}">${r.pctInv.toFixed(0)}%</td>
+              </tr>`).join('')}
+            <tr style="font-weight:700;"><td style="border-top:2px solid var(--border-hi);">Meta (projetado)</td><td class="num" style="text-align:right;border-top:2px solid var(--border-hi);">${targets.essencial}%</td><td class="num" style="text-align:right;border-top:2px solid var(--border-hi);">${targets.naoEssencial}%</td><td class="num" style="text-align:right;border-top:2px solid var(--border-hi);">${targets.investido}%</td></tr>
+          </tbody>
+        </table>
+        <p style="color:var(--text-muted);font-size:12px;margin:12px 0 0 0;">Vermelho = passou do projetado em essenciais/não essenciais. Âmbar = investiu menos que o projetado.</p>
+      </div>
+    </section>` : ''}
   `;
 }
 function updateBudgetTarget(key, value){
@@ -1995,11 +2116,13 @@ function goalMonthlyPlan(g, monthKeyStr){
 }
 function goalCardHtml(g,i){
   const color = colorForIndex(i+2);
-  const pct = g.target>0 ? Math.min(100,(g.current/g.target)*100) : 0;
+  const linkedInv = g.linkedInvestmentId ? data.investments.find(x=>x.id===g.linkedInvestmentId) : null;
+  const current = linkedInv ? linkedInv.currentValue : g.current;
+  const pct = g.target>0 ? Math.min(100,(current/g.target)*100) : 0;
   let monthlyNeeded = null;
   if(g.deadline){
     const months = Math.max(1, Math.ceil((new Date(g.deadline)-new Date())/(1000*60*60*24*30)));
-    monthlyNeeded = Math.max(0,(g.target-g.current))/months;
+    monthlyNeeded = Math.max(0,(g.target-current))/months;
   }
   const now = new Date();
   const curKey = now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
@@ -2015,16 +2138,21 @@ function goalCardHtml(g,i){
         <button class="iconbtn" onclick="openGoalModal('${g.id}')" title="Editar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M11 4H6a2 2 0 00-2 2v12a2 2 0 002 2h12a2 2 0 002-2v-5M18.5 2.5a2.1 2.1 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
         <button class="iconbtn" onclick="deleteEntry('goals','${g.id}')" title="Excluir"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6 7h12M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2m2 0v13a1 1 0 01-1 1H8a1 1 0 01-1-1V7h10z"/></svg></button>
       </div>
-      <div class="k">${g.deadline?('até '+fmtDate(g.deadline)):'meta'}</div>
+      <div class="k">${g.deadline?('até '+fmtDate(g.deadline)):'meta'}${linkedInv?' · vinculada':''}</div>
       <div class="v">${escapeHtml(g.name)}</div>
-      <div class="t num">${fmtMoney(g.current)} de ${fmtMoney(g.target)}</div>
+      <div class="t num">${fmtMoney(current)} de ${fmtMoney(g.target)}</div>
       <div class="progress-bar"><div style="width:${pct}%"></div></div>
       <div class="meta">${pct.toFixed(0)}% concluído${plano?` · plano: ${fmtMoney(plano)}/mês${g.planMode==='variavel'?' (variável)':''}`:''}</div>
       ${plano ? `<div class="meta" style="color:${contribMes>=plano?'var(--mint)':'var(--amber)'}">Este mês: ${fmtMoney(contribMes)} de ${fmtMoney(plano)}</div>` : ''}
       <div class="chart-bars" style="height:32px;margin-top:10px;justify-content:flex-start;gap:4px;">
         ${evoVals.map(v=>`<div class="bar in" style="height:${Math.max(2,(v/evoMax)*30)}px;width:8px;background:${color}" title="${fmtMoney(v)}"></div>`).join('')}
       </div>
-      <button class="btn ghost sm" style="margin-top:10px;position:relative;" onclick="openGoalAporteModal('${g.id}')">+ Registrar aporte</button>
+      ${linkedInv ? `
+        <div class="meta" style="margin-top:8px;">Valor vem do investimento "${escapeHtml(linkedInv.name)}" — atualize lá em Investimentos.</div>
+        <button class="btn ghost sm" style="margin-top:8px;position:relative;" onclick="showPage('investimentos')">Ver investimento</button>
+      ` : `
+        <button class="btn ghost sm" style="margin-top:10px;position:relative;" onclick="openGoalAporteModal('${g.id}')">+ Registrar aporte</button>
+      `}
     </div>`;
 }
 function renderMetas(){
@@ -2045,6 +2173,11 @@ function setGoalPlanMode(mode){
   document.getElementById('planFieldFixo').style.display = mode==='fixo' ? 'block' : 'none';
   document.getElementById('planFieldVariavel').style.display = mode==='variavel' ? 'block' : 'none';
 }
+function onGoalLinkedInvestmentChange(){
+  const val = document.getElementById('f_glinkedinv').value;
+  const wrap = document.getElementById('f_gcurrentWrap');
+  if(wrap) wrap.style.display = val ? 'none' : 'block';
+}
 function openGoalModal(id){
   const g = id ? data.goals.find(x=>x.id===id) : null;
   goalPlanModeState = g ? (g.planMode||'fixo') : 'fixo';
@@ -2056,12 +2189,15 @@ function openGoalModal(id){
   const now = new Date();
   const curKey = now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
   const curVariavelValue = g && g.monthlyPlan ? (g.monthlyPlan[curKey]||'') : '';
+  const hasLink = g && g.linkedInvestmentId;
   openModalWith(`
     <h3>${g?'Editar meta':'Nova meta'}</h3>
     <div class="field"><label>Nome</label><input id="f_gname" value="${g?escapeHtml(g.name):''}" placeholder="Ex: Reserva para residência médica, Carro novo..."></div>
+    <div class="field"><label>Vincular a um investimento (opcional)</label><select id="f_glinkedinv" onchange="onGoalLinkedInvestmentChange()"><option value="">Nenhum — controlar valor aqui na meta</option>${data.investments.map(inv=>`<option value="${inv.id}" ${g&&g.linkedInvestmentId===inv.id?'selected':''}>${escapeHtml(inv.name)}</option>`).join('')}</select></div>
+    <div class="infobox">Se vincular, o valor atual desta meta passa a ser sempre o valor atual daquele investimento — evita ter o mesmo dinheiro registrado (e desatualizado) em dois lugares. Sem vínculo, você controla o valor aqui mesmo com "Registrar aporte".</div>
     <div class="field-row">
       <div class="field"><label>Valor alvo (R$)</label><input id="f_gtarget" type="number" step="0.01" value="${g?g.target:''}" placeholder="0,00"></div>
-      <div class="field"><label>Valor atual (R$)</label><input id="f_gcurrent" type="number" step="0.01" value="${g?g.current:0}" placeholder="0,00"></div>
+      <div class="field" id="f_gcurrentWrap" style="display:${hasLink?'none':'block'};"><label>Valor atual (R$)</label><input id="f_gcurrent" type="number" step="0.01" value="${g?g.current:0}" placeholder="0,00"></div>
     </div>
     <div class="field"><label>Prazo (opcional)</label><input id="f_gdeadline" type="date" value="${g&&g.deadline?g.deadline:''}"></div>
     <div class="field"><label>Quanto quer guardar por mês</label></div>
@@ -2085,10 +2221,16 @@ function openGoalModal(id){
 function saveGoal(id){
   const name = document.getElementById('f_gname').value.trim();
   const target = parseFloat(document.getElementById('f_gtarget').value);
-  const current = parseFloat(document.getElementById('f_gcurrent').value)||0;
   const deadline = document.getElementById('f_gdeadline').value || null;
+  const linkedInvestmentId = document.getElementById('f_glinkedinv').value || null;
   if(!name || isNaN(target) || target<=0){ toast('Preencha nome e valor alvo.'); return; }
-  const payload = { name, target, current, deadline, planMode: goalPlanModeState };
+  const payload = { name, target, deadline, linkedInvestmentId, planMode: goalPlanModeState };
+  if(linkedInvestmentId){
+    const inv = data.investments.find(x=>x.id===linkedInvestmentId);
+    payload.current = inv ? inv.currentValue : 0;
+  } else {
+    payload.current = parseFloat(document.getElementById('f_gcurrent').value)||0;
+  }
   if(goalPlanModeState==='fixo'){
     payload.monthlyTarget = parseFloat(document.getElementById('f_gmonthly').value) || null;
   } else {
