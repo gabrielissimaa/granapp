@@ -1319,8 +1319,38 @@ function renderOrcamento(){
   const capacidadeMin = capacidadeMax * 0.5;
   const temDadosCapacidade = rendaMedia>0 && essAvg.monthsWithData>0;
 
+  const spReceita = receitasInRange(curRange);
+  const spGuardarMetas = data.goals.reduce((s,g)=>s+(g.monthlyTarget||0),0);
+  const spGuardarInvest = data.settings.plannedMonthlyInvestment || 0;
+  const spGuardar = spGuardarMetas + spGuardarInvest;
+  const spFixas = despesasInRange(curRange, t=>t.fixedVariable==='fixo');
+  const spDisponivel = spReceita - spGuardar - spFixas;
+  const spVariavelGasto = despesasInRange(curRange, t=>t.fixedVariable==='variavel');
+
   el.innerHTML = `
     <div class="page-head"><div><h1>Orçamento</h1><p>Sugestões com base na média dos últimos 3 meses — edite livremente</p></div></div>
+
+    <section class="block">
+      <div class="block-head"><h3>Quanto posso gastar este mês</h3></div>
+      <div class="panel" style="max-width:640px;">
+        <p style="color:var(--text-muted);font-size:13px;margin:0 0 16px 0;">Método "pague-se primeiro": separa o que você quer guardar antes de olhar pra sobra — o que fica é o que você tem livre pra gastar no mês, sem contar o que já vai reservado.</p>
+        <table class="datatable" style="margin-bottom:6px;">
+          <tbody>
+            <tr><td>Receita do mês</td><td class="num pos" style="text-align:right;">${fmtMoney(spReceita)}</td></tr>
+            <tr><td>(–) Guardar (metas + investimentos planejados)</td><td class="num" style="text-align:right;color:var(--violet);">${fmtMoney(spGuardar)}</td></tr>
+            <tr><td>(–) Despesas fixas do mês</td><td class="num neg" style="text-align:right;">${fmtMoney(spFixas)}</td></tr>
+            <tr style="font-weight:700;"><td style="border-top:2px solid var(--border-hi);">Disponível para gastos variáveis</td><td class="num" style="text-align:right;border-top:2px solid var(--border-hi);color:${spDisponivel>=0?'var(--mint)':'var(--coral)'};">${fmtMoney(spDisponivel)}</td></tr>
+          </tbody>
+        </table>
+        ${spDisponivel>0 ? `
+          <div class="split-row-title" style="margin-top:14px;">Já usado este mês (gastos variáveis)</div>
+          <div class="split"><div style="width:${Math.min(100,(spVariavelGasto/spDisponivel)*100)}%;background:${spVariavelGasto>spDisponivel?'var(--coral)':'var(--mint)'}"></div></div>
+          <div class="split-legend"><span>Gasto: <b class="num">${fmtMoney(spVariavelGasto)}</b></span><span>Ainda livre: <b class="num">${fmtMoney(Math.max(0,spDisponivel-spVariavelGasto))}</b></span></div>
+        ` : ''}
+        <div class="infobox" style="margin-top:14px;">"Guardar" soma o plano mensal de cada meta (defina em Metas) + o que você marcar abaixo para investir este mês.</div>
+        <div class="field" style="margin-top:10px;max-width:260px;"><label>Quanto pretende investir este mês (R$)</label><input id="f_investPlanned" type="number" step="10" value="${data.settings.plannedMonthlyInvestment||''}" placeholder="0,00" onchange="updatePlannedInvestment(this.value)"></div>
+      </div>
+    </section>
 
     ${rows.length ? `
     <div class="panel" style="margin-bottom:24px;overflow-x:auto;">
@@ -1358,6 +1388,11 @@ function renderOrcamento(){
 function updateBudget(cat, value){
   const v = parseFloat(value);
   data.budgetOverrides[cat] = isNaN(v) ? undefined : v;
+  scheduleSave();
+}
+function updatePlannedInvestment(value){
+  const v = parseFloat(value);
+  data.settings.plannedMonthlyInvestment = isNaN(v) ? 0 : v;
   scheduleSave();
 }
 
@@ -1526,6 +1561,12 @@ function renderInvestimentos(){
     <div class="cards">${data.investments.length ? data.investments.map((inv,i)=>investCardHtml(inv,i)).join('') : '<div class="empty">Nenhum investimento cadastrado. Que tal começar com seus aportes em Tesouro Direto?</div>'}</div>
   `;
 }
+function investmentObjectiveOptions(){
+  const set = new Set(INVEST_OBJECTIVES);
+  data.investments.forEach(i=>{ if(i.objective) set.add(i.objective); });
+  data.goals.forEach(g=>{ if(g.name) set.add(g.name); });
+  return Array.from(set);
+}
 function openInvModal(id){
   const inv = id ? data.investments.find(x=>x.id===id) : null;
   openModalWith(`
@@ -1533,7 +1574,9 @@ function openInvModal(id){
     <div class="field"><label>Nome / Ativo</label><input id="f_iname" value="${inv?escapeHtml(inv.name):''}" placeholder="Ex: Tesouro Selic 2029"></div>
     <div class="field-row">
       <div class="field"><label>Tipo</label><select id="f_itype">${INVEST_TYPES.map(t=>`<option ${inv&&inv.type===t?'selected':''}>${t}</option>`).join('')}</select></div>
-      <div class="field"><label>Objetivo</label><select id="f_iobj">${INVEST_OBJECTIVES.map(o=>`<option ${inv&&inv.objective===o?'selected':''}>${o}</option>`).join('')}</select></div>
+      <div class="field"><label>Objetivo</label><input id="f_iobj" value="${inv?escapeHtml(inv.objective||''):''}" placeholder="Ex: Reserva de emergência, uma meta sua..." list="objPresets">
+        <datalist id="objPresets">${investmentObjectiveOptions().map(o=>`<option value="${escapeHtml(o)}">`).join('')}</datalist>
+      </div>
     </div>
     <div class="field"><label>Instituição</label><input id="f_iinst" value="${inv?escapeHtml(inv.institution||''):''}" placeholder="Ex: Inter, XP..."></div>
     <div class="field-row">
@@ -1655,6 +1698,9 @@ function registerSnapshot(){
 /* =========================================================
    RENDER: METAS
 ========================================================= */
+function goalMonthlyContributed(g, monthKeyStr){
+  return (g.contributions||[]).filter(c=>monthKey(c.date)===monthKeyStr).reduce((s,c)=>s+c.amount,0);
+}
 function goalCardHtml(g,i){
   const color = colorForIndex(i+2);
   const pct = g.target>0 ? Math.min(100,(g.current/g.target)*100) : 0;
@@ -1663,6 +1709,14 @@ function goalCardHtml(g,i){
     const months = Math.max(1, Math.ceil((new Date(g.deadline)-new Date())/(1000*60*60*24*30)));
     monthlyNeeded = Math.max(0,(g.target-g.current))/months;
   }
+  const plano = g.monthlyTarget || monthlyNeeded;
+  const now = new Date();
+  const curKey = now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
+  const contribMes = goalMonthlyContributed(g, curKey);
+  const months6 = lastNMonthKeys(6);
+  const evoVals = months6.map(m=>goalMonthlyContributed(g, m.key));
+  const evoMax = Math.max(1, ...evoVals, plano||0);
+
   return `
     <div class="card" style="--accent:${color}">
       <div class="actions">
@@ -1673,7 +1727,12 @@ function goalCardHtml(g,i){
       <div class="v">${escapeHtml(g.name)}</div>
       <div class="t num">${fmtMoney(g.current)} de ${fmtMoney(g.target)}</div>
       <div class="progress-bar"><div style="width:${pct}%"></div></div>
-      <div class="meta">${pct.toFixed(0)}% concluído${monthlyNeeded!=null?` · aporte necessário: ${fmtMoney(monthlyNeeded)}/mês`:''}</div>
+      <div class="meta">${pct.toFixed(0)}% concluído${plano?` · plano: ${fmtMoney(plano)}/mês`:''}</div>
+      ${plano ? `<div class="meta" style="color:${contribMes>=plano?'var(--mint)':'var(--amber)'}">Este mês: ${fmtMoney(contribMes)} de ${fmtMoney(plano)}</div>` : ''}
+      <div class="chart-bars" style="height:32px;margin-top:10px;justify-content:flex-start;gap:4px;">
+        ${evoVals.map(v=>`<div class="bar in" style="height:${Math.max(2,(v/evoMax)*30)}px;width:8px;background:${color}" title="${fmtMoney(v)}"></div>`).join('')}
+      </div>
+      <button class="btn ghost sm" style="margin-top:10px;position:relative;" onclick="openGoalAporteModal('${g.id}')">+ Registrar aporte</button>
     </div>`;
 }
 function renderMetas(){
@@ -1688,6 +1747,11 @@ function renderMetas(){
 }
 function openGoalModal(id){
   const g = id ? data.goals.find(x=>x.id===id) : null;
+  let sugestao = null;
+  if(g && g.deadline){
+    const months = Math.max(1, Math.ceil((new Date(g.deadline)-new Date())/(1000*60*60*24*30)));
+    sugestao = Math.max(0,(g.target-g.current))/months;
+  }
   openModalWith(`
     <h3>${g?'Editar meta':'Nova meta'}</h3>
     <div class="field"><label>Nome</label><input id="f_gname" value="${g?escapeHtml(g.name):''}" placeholder="Ex: Reserva para residência médica"></div>
@@ -1696,6 +1760,7 @@ function openGoalModal(id){
       <div class="field"><label>Valor atual (R$)</label><input id="f_gcurrent" type="number" step="0.01" value="${g?g.current:0}" placeholder="0,00"></div>
     </div>
     <div class="field"><label>Prazo (opcional)</label><input id="f_gdeadline" type="date" value="${g&&g.deadline?g.deadline:''}"></div>
+    <div class="field"><label>Quanto quer guardar por mês (opcional)</label><input id="f_gmonthly" type="number" step="0.01" value="${g&&g.monthlyTarget?g.monthlyTarget:''}" placeholder="${sugestao?('sugestão pelo prazo: '+fmtMoney(sugestao)):'0,00'}"></div>
     <div class="modal-actions">
       <button class="btn ghost" onclick="closeModal()">Cancelar</button>
       <button class="btn accent" onclick="saveGoal('${g?g.id:''}')">Salvar</button>
@@ -1707,10 +1772,35 @@ function saveGoal(id){
   const target = parseFloat(document.getElementById('f_gtarget').value);
   const current = parseFloat(document.getElementById('f_gcurrent').value)||0;
   const deadline = document.getElementById('f_gdeadline').value || null;
+  const monthlyTarget = parseFloat(document.getElementById('f_gmonthly').value) || null;
   if(!name || isNaN(target) || target<=0){ toast('Preencha nome e valor alvo.'); return; }
-  if(id){ Object.assign(data.goals.find(x=>x.id===id), {name,target,current,deadline}); }
-  else{ data.goals.push({id: uid(), name, target, current, deadline}); }
+  if(id){ Object.assign(data.goals.find(x=>x.id===id), {name,target,current,deadline,monthlyTarget}); }
+  else{ data.goals.push({id: uid(), name, target, current, deadline, monthlyTarget, contributions: []}); }
   closeModal(); renderAll(); scheduleSave(); toast('Meta salva.');
+}
+function openGoalAporteModal(goalId){
+  const g = data.goals.find(x=>x.id===goalId);
+  openModalWith(`
+    <h3>Registrar aporte — ${escapeHtml(g.name)}</h3>
+    <div class="field-row">
+      <div class="field"><label>Valor (R$)</label><input id="f_gaporteValor" type="number" step="0.01" placeholder="0,00"></div>
+      <div class="field"><label>Data</label><input id="f_gaporteData" type="date" value="${todayStr()}"></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal()">Cancelar</button>
+      <button class="btn accent" onclick="confirmGoalAporte('${goalId}')">Registrar</button>
+    </div>
+  `);
+}
+function confirmGoalAporte(goalId){
+  const g = data.goals.find(x=>x.id===goalId);
+  const valor = parseFloat(document.getElementById('f_gaporteValor').value);
+  const date = document.getElementById('f_gaporteData').value;
+  if(isNaN(valor) || valor<=0 || !date){ toast('Preencha um valor válido e a data.'); return; }
+  g.current = (g.current||0) + valor;
+  if(!g.contributions) g.contributions = [];
+  g.contributions.push({id:uid(), date, amount: valor});
+  closeModal(); renderAll(); scheduleSave(); toast('Aporte registrado na meta.');
 }
 
 /* =========================================================
