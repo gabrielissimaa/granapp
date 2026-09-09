@@ -1269,11 +1269,12 @@ function shiftCardRow(sh){
   const acc = data.accounts.find(a=>a.id===sh.accountId);
   const ct = sh.contractType || 'Plantão';
   const goal = sh.goalId ? data.goals.find(g=>g.id===sh.goalId) : null;
+  const periodIcon = sh.period==='Noite' ? '🌙' : '☀️';
   return `
     <div class="row" style="--accent:${color}">
       <div class="date">${fmtDate(sh.date)}</div>
       <div class="desc"><div class="t">${escapeHtml(sh.location||'—')}</div></div>
-      <span class="badge outline">${escapeHtml(ct)}</span>
+      <span class="badge outline">${periodIcon} ${escapeHtml(ct)}</span>
       ${sh.hours?`<span class="badge outline">${sh.hours}h</span>`:''}
       ${goal?`<span class="badge" style="background:var(--violet)26;color:var(--violet)">🎯 ${escapeHtml(goal.name)}</span>`:''}
       <span class="badge" style="background:${color}26;color:${color}">${sh.status}</span>
@@ -1348,10 +1349,16 @@ function openShiftModal(id, prefillDate){
       <div class="field"><label>Status</label><select id="f_status">${SHIFT_STATUS.map(x=>`<option ${s&&s.status===x?'selected':''}>${x}</option>`).join('')}</select></div>
     </div>
     <div class="field-row">
+      <div class="field"><label>Período</label><select id="f_period">
+        <option value="Dia" ${!s||s.period==='Dia'?'selected':''}>☀️ Dia</option>
+        <option value="Noite" ${s&&s.period==='Noite'?'selected':''}>🌙 Noite</option>
+      </select></div>
       <div class="field"><label>Tipo de contrato</label><select id="f_contracttype">${CONTRACT_TYPES.map(x=>`<option ${(s?(s.contractType||'Plantão'):'Plantão')===x?'selected':''}>${x}</option>`).join('')}</select></div>
-      <div class="field"><label>Horas trabalhadas</label><input id="f_hours" type="number" step="0.5" value="${s?s.hours||'':''}" placeholder="12"></div>
     </div>
-    <div class="field"><label>Local / Hospital</label><input id="f_location" value="${s?escapeHtml(s.location||''):''}" placeholder="Ex: HMAS"></div>
+    <div class="field-row">
+      <div class="field"><label>Horas trabalhadas</label><input id="f_hours" type="number" step="0.5" value="${s?s.hours||'':''}" placeholder="12"></div>
+      <div class="field"><label>Local / Hospital</label><input id="f_location" value="${s?escapeHtml(s.location||''):''}" placeholder="Ex: HMAS"></div>
+    </div>
     <div class="field"><label>Tipo de trabalho</label><input id="f_worktype" value="${s?escapeHtml(s.workType||''):''}" placeholder="Ex: Plantão noturno, RPA, CLT"></div>
     <div class="field-row">
       <div class="field"><label>Valor bruto (R$)</label><input id="f_gross" type="number" step="0.01" value="${s?s.grossAmount||'':''}" placeholder="0,00"></div>
@@ -1383,6 +1390,7 @@ function saveShift(id){
   const payload = {
     date, location,
     contractType: document.getElementById('f_contracttype').value,
+    period: document.getElementById('f_period').value,
     workType: document.getElementById('f_worktype').value.trim(),
     hours: parseFloat(document.getElementById('f_hours').value)||0,
     grossAmount: parseFloat(document.getElementById('f_gross').value)||0,
@@ -1457,13 +1465,15 @@ function renderAgendaCalendar(){
     const hasDay = avail.manha || avail.tarde;
     const hasNight = avail.noite;
     const isAvail = hasDay || hasNight;
-    const shiftsOnDay = data.shifts.filter(sh=>sh.date===dateStr);
-    const hasShift = shiftsOnDay.length>0;
     const isToday = dateStr===todayStrVal;
+    const shiftsOnDay = data.shifts.filter(sh=>sh.date===dateStr);
+    const dayBooked = shiftsOnDay.some(sh=>(sh.period||'Dia')==='Dia');
+    const nightBooked = shiftsOnDay.some(sh=>(sh.period||'Dia')==='Noite');
+    const hasShift = shiftsOnDay.length>0;
     const cellClass = hasShift ? 'hasshift' : (isAvail ? 'avail' : 'unavail');
     let icons = '';
-    if(hasDay) icons += '☀️';
-    if(hasNight) icons += '🌙';
+    if(hasDay && !dayBooked) icons += '☀️';
+    if(hasNight && !nightBooked) icons += '🌙';
     html += `
       <div class="agenda-cell ${cellClass} ${isToday?'today':''}" onclick="openDayModal('${dateStr}')">
         <div class="agenda-daynum">${d}</div>
@@ -1506,19 +1516,21 @@ function openDayModal(dateStr){
   const dow = new Date(dateStr+'T00:00:00').getDay();
   const avail = data.availability.weekTemplate[dow];
   const shiftsOnDay = data.shifts.filter(sh=>sh.date===dateStr);
+  const dayBooked = shiftsOnDay.some(sh=>(sh.period||'Dia')==='Dia');
+  const nightBooked = shiftsOnDay.some(sh=>(sh.period||'Dia')==='Noite');
+  const statusLabel = (templateAvail, booked) => booked ? 'Já ocupado (plantão)' : (templateAvail ? 'Disponível' : 'Ocupada');
+  const statusColor = (templateAvail, booked) => booked ? 'var(--violet)' : (templateAvail ? 'var(--mint)' : 'var(--text-muted)');
   openModalWith(`
     <h3>${WEEKDAY_NAMES[dow]}, ${fmtDate(dateStr)}</h3>
     <div class="chipgrid" style="margin-bottom:16px;">
-      <div class="chip"><div class="lbl">☀️ Manhã</div><div class="val" style="color:${avail.manha?'var(--mint)':'var(--text-muted)'}">${avail.manha?'Disponível':'Ocupada'}</div></div>
-      <div class="chip"><div class="lbl">☀️ Tarde</div><div class="val" style="color:${avail.tarde?'var(--mint)':'var(--text-muted)'}">${avail.tarde?'Disponível':'Ocupada'}</div></div>
-      <div class="chip"><div class="lbl">🌙 Noite</div><div class="val" style="color:${avail.noite?'var(--mint)':'var(--text-muted)'}">${avail.noite?'Disponível':'Ocupada'}</div></div>
+      <div class="chip"><div class="lbl">☀️ Manhã/Tarde</div><div class="val" style="color:${statusColor(avail.manha||avail.tarde, dayBooked)}">${statusLabel(avail.manha||avail.tarde, dayBooked)}</div></div>
+      <div class="chip"><div class="lbl">🌙 Noite</div><div class="val" style="color:${statusColor(avail.noite, nightBooked)}">${statusLabel(avail.noite, nightBooked)}</div></div>
     </div>
-    ${shiftsOnDay.length ? `<div class="infobox" style="margin-bottom:14px;">Este dia já tem ${shiftsOnDay.length} plantão(ões) marcado(s) — considere isso antes de confirmar mais um.</div>` : ''}
     ${avail.note ? `<p style="color:var(--text-muted);font-size:12.5px;margin:-8px 0 14px 0;">${escapeHtml(avail.note)}</p>` : ''}
     ${shiftsOnDay.length ? `
       <div class="ledger" style="margin-bottom:16px;">
         ${shiftsOnDay.map(sh=>`
-          <div class="row" style="--accent:var(--violet)"><div class="desc"><div class="t">${escapeHtml(sh.location||sh.contractType||'Plantão')}</div></div><span class="badge outline">${sh.status}</span><div class="amt num pos">${fmtMoney(sh.netAmount||sh.grossAmount||0)}</div></div>`).join('')}
+          <div class="row" style="--accent:var(--violet)"><div class="desc"><div class="t">${sh.period==='Noite'?'🌙':'☀️'} ${escapeHtml(sh.location||sh.contractType||'Plantão')}</div></div><span class="badge outline">${sh.status}</span><div class="amt num pos">${fmtMoney(sh.netAmount||sh.grossAmount||0)}</div></div>`).join('')}
       </div>` : '<div class="empty" style="padding:6px 0 16px 0;">Nenhum plantão registrado neste dia ainda.</div>'}
     <div class="modal-actions">
       <button class="btn ghost" onclick="closeModal()">Fechar</button>
