@@ -233,6 +233,18 @@
   .tuto-step-title{color:var(--text);font-weight:600;font-size:13.5px;margin-bottom:3px;}
   .tuto-step-text{color:var(--text-muted);}
 
+  /* Agenda de plantões */
+  .agenda-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;}
+  .agenda-dow{text-align:center;font-size:11px;color:var(--text-muted);font-weight:600;padding-bottom:4px;}
+  .agenda-cell{aspect-ratio:1;border-radius:10px;border:1px solid var(--border);display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;position:relative;font-size:12px;background:var(--surface);transition:border-color .15s;}
+  .agenda-cell:hover{border-color:var(--border-hi);}
+  .agenda-cell.empty{border:none;cursor:default;background:none;}
+  .agenda-cell.avail{background:rgba(0,230,160,0.10);border-color:rgba(0,230,160,0.28);}
+  .agenda-cell.unavail{opacity:.5;}
+  .agenda-cell.today{box-shadow:0 0 0 2px var(--violet);}
+  .agenda-daynum{font-weight:600;color:var(--text);}
+  .agenda-dot{position:absolute;bottom:5px;width:6px;height:6px;border-radius:50%;background:var(--mint);}
+
   @media print{
     body{background:#fff !important;color:#111 !important;}
     .sidebar,.hamburger,.sidebar-overlay,.toast,#overlay,.no-print{display:none !important;}
@@ -309,6 +321,7 @@
     <div class="page" id="page-lancamentos"></div>
     <div class="page" id="page-receitas"></div>
     <div class="page" id="page-trabalhos"></div>
+    <div class="page" id="page-agenda"></div>
     <div class="page" id="page-orcamento"></div>
     <div class="page" id="page-dre"></div>
     <div class="page" id="page-investimentos"></div>
@@ -345,6 +358,7 @@ let data = {
   netWorthSnapshots: [],
   budgetOverrides: {},
   categories: [],      // {id, name, group: 'pessoal'|'profissional'} — editável pelo usuário
+  availability: null,  // disponibilidade semanal para plantões
   settings: { emergencyMonths: 6 }
 };
 let loaded = false;
@@ -365,6 +379,22 @@ function ensureCategoriesSeeded(){
 }
 function ensureAccountBalanceDatesSeeded(){
   data.accounts.forEach(a=>{ if(!a.balanceDate) a.balanceDate = todayStr(); });
+}
+function ensureAvailabilitySeeded(){
+  if(!data.availability || !data.availability.weekTemplate){
+    const blank = ()=>({manha:false, tarde:false, noite:false, note:''});
+    data.availability = {
+      weekTemplate: {
+        0: Object.assign(blank(), {manha:true, tarde:true, noite:true}),   // domingo
+        1: Object.assign(blank(), {noite:true}),                            // segunda
+        2: Object.assign(blank(), {noite:true}),                            // terça
+        3: Object.assign(blank(), {manha:true, tarde:true, noite:true}),   // quarta (day off)
+        4: Object.assign(blank(), {noite:true}),                            // quinta
+        5: Object.assign(blank(), {noite:true}),                            // sexta
+        6: Object.assign(blank(), {manha:true, tarde:true, noite:true}),   // sábado
+      }
+    };
+  }
 }
 function categoryNames(group){
   if(!data.categories) return [];
@@ -406,6 +436,7 @@ const NAV_GROUPS = [
   {label:'RENDA', items:[
     {id:'receitas', label:'Receitas', icon:'M12 4v16m0-16l-4 4m4-4l4 4'},
     {id:'trabalhos', label:'Plantões / Trabalhos', icon:'M21 13.5V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2h6M16 3v4M8 3v4M3 11h11m3 6l2 2 4-4'},
+    {id:'agenda', label:'Agenda de Plantões', icon:'M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z'},
   ]},
   {label:'PLANEJAMENTO', items:[
     {id:'orcamento', label:'Orçamento', icon:'M9 17V9m4 8V5m4 12v-6M5 21h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v14a2 2 0 002 2z'},
@@ -553,7 +584,7 @@ async function loadData(){
       data = Object.assign(structuredCloneSafe(data), cached.data);
     }
   }catch(e){}
-  ensureCategoriesSeeded(); ensureAccountBalanceDatesSeeded();
+  ensureCategoriesSeeded(); ensureAccountBalanceDatesSeeded(); ensureAvailabilitySeeded();
   loaded = true;
   renderAll();
   setSync(navigator.onLine ? 'warn' : 'bad');
@@ -566,7 +597,7 @@ async function loadData(){
         const remoteUpdatedAt = new Date(row.updated_at).getTime();
         if(remoteUpdatedAt >= localUpdatedAt){
           data = Object.assign(structuredCloneSafe(data), row.data);
-          ensureCategoriesSeeded(); ensureAccountBalanceDatesSeeded();
+          ensureCategoriesSeeded(); ensureAccountBalanceDatesSeeded(); ensureAvailabilitySeeded();
           await idbSet('app-data', {data, updatedAt: remoteUpdatedAt});
           renderAll();
         }
@@ -769,8 +800,49 @@ function monthsWithAnyData(){
    RENDER: VISÃO GERAL
 ========================================================= */
 let visaoState = { period:'mes-atual', customStart:null, customEnd:null };
+function generateMonthlySummary(){
+  const now = new Date();
+  const prevMonthDate = new Date(now.getFullYear(), now.getMonth()-1, 1);
+  const range = rangeForPeriod('custom', prevMonthDate.toISOString().slice(0,10), new Date(prevMonthDate.getFullYear(), prevMonthDate.getMonth()+1, 0).toISOString().slice(0,10));
+  const monthName = prevMonthDate.toLocaleDateString('pt-BR', {month:'long'});
+
+  const receita = receitasInRange(range);
+  const gastos = despesasInRange(range);
+  const investido = investidoInRange(range);
+  const saldo = receita - gastos;
+  if(receita===0 && gastos===0) return null;
+
+  const catTotals = {};
+  data.transactions.filter(t=>t.type==='despesa' && inRange(t.date,range)).forEach(t=>{ catTotals[t.category]=(catTotals[t.category]||0)+t.amount; });
+  const catSorted = Object.entries(catTotals).sort((a,b)=>b[1]-a[1]);
+  const maiorCategoria = catSorted[0];
+
+  // comparação com o mês anterior a esse
+  const twoMonthsAgo = new Date(now.getFullYear(), now.getMonth()-2, 1);
+  const rangePrev = rangeForPeriod('custom', twoMonthsAgo.toISOString().slice(0,10), new Date(twoMonthsAgo.getFullYear(), twoMonthsAgo.getMonth()+1, 0).toISOString().slice(0,10));
+  const gastosPrev = despesasInRange(rangePrev);
+  const diffGastos = gastosPrev>0 ? ((gastos-gastosPrev)/gastosPrev)*100 : null;
+
+  const metasContribMes = data.goals.reduce((s,g)=> s + goalMonthlyContributed(g, monthKey(range.start)), 0);
+
+  let texto = `Em ${monthName}, você ganhou ${fmtMoney(receita)} e gastou ${fmtMoney(gastos)}`;
+  texto += saldo>=0 ? `, deixando um saldo positivo de ${fmtMoney(saldo)}.` : `, ficando no negativo em ${fmtMoney(Math.abs(saldo))}.`;
+  if(maiorCategoria){
+    texto += ` A categoria com maior gasto foi ${maiorCategoria[0]} (${fmtMoney(maiorCategoria[1])}).`;
+  }
+  if(investido>0 || metasContribMes>0){
+    texto += ` Você guardou ${fmtMoney(investido+metasContribMes)} entre investimentos e metas.`;
+  } else {
+    texto += ` Não houve aportes registrados em investimentos ou metas neste mês.`;
+  }
+  if(diffGastos!=null){
+    texto += diffGastos>5 ? ` Seus gastos subiram ${diffGastos.toFixed(0)}% em relação ao mês anterior.` : diffGastos<-5 ? ` Seus gastos caíram ${Math.abs(diffGastos).toFixed(0)}% em relação ao mês anterior.` : ` Seus gastos ficaram estáveis em relação ao mês anterior.`;
+  }
+  return texto;
+}
 function renderVisao(){
   const el = document.getElementById('page-visao');
+  const monthlySummary = generateMonthlySummary();
   const range = rangeForPeriod(visaoState.period, visaoState.customStart, visaoState.customEnd);
   const receita = receitasInRange(range);
   const gastos = despesasInRange(range);
@@ -834,6 +906,12 @@ function renderVisao(){
       <div class="hero-cell"><div class="label">Investido no período</div><div class="value num" style="color:var(--violet)">${fmtMoney(investido)}</div></div>
       <div class="hero-cell"><div class="label">Reserva de emergência</div><div class="value num" style="color:var(--cyan)">${reservaPct.toFixed(0)}%</div><div class="sub">${fmtMoney(reserva)} de ${fmtMoney(idealReserve)}</div></div>
     </div>
+
+    ${monthlySummary ? `
+    <section class="block">
+      <div class="block-head"><h3>Resumo do mês passado</h3></div>
+      <div class="panel"><p style="margin:0;line-height:1.6;font-size:14px;color:var(--text);">${monthlySummary}</p></div>
+    </section>` : ''}
 
     <section class="block">
       <div class="block-head"><h3>Indicadores do período</h3></div>
@@ -953,10 +1031,11 @@ function renderAnaliseFinanceira(){
 ========================================================= */
 let lancFilter = { type:'all', purpose:'all', essential:'all', fixedVariable:'all', accountId:'all', unclassified:false };
 function shiftAsVirtualTx(sh){
+  const ct = sh.contractType || 'Plantão';
   return {
     id: 'shift-'+sh.id, type:'receita', date: sh.actualDate||sh.date,
-    description: sh.location ? ('Plantão — '+sh.location) : 'Plantão',
-    amount: sh.netAmount||sh.grossAmount||0, category:'Plantão', source:'Plantão',
+    description: sh.location ? (ct+' — '+sh.location) : ct,
+    amount: sh.netAmount||sh.grossAmount||0, category:ct, source:ct,
     accountId: sh.accountId, purpose:'profissional', notes: sh.notes||'',
     isShift:true, shiftRef: sh.id
   };
@@ -1182,14 +1261,16 @@ function renderReceitas(){
    RENDER: TRABALHOS / PLANTÕES
 ========================================================= */
 const SHIFT_STATUS = ['Previsto','Recebido','Atrasado'];
+const CONTRACT_TYPES = ['Plantão','Clínica da família','Outro'];
 function shiftCardRow(sh){
   const color = sh.status==='Recebido' ? 'var(--mint)' : sh.status==='Atrasado' ? 'var(--coral)' : 'var(--amber)';
   const acc = data.accounts.find(a=>a.id===sh.accountId);
+  const ct = sh.contractType || 'Plantão';
   return `
     <div class="row" style="--accent:${color}">
       <div class="date">${fmtDate(sh.date)}</div>
       <div class="desc"><div class="t">${escapeHtml(sh.location||'—')}</div></div>
-      <span class="badge outline">${escapeHtml(sh.workType||'Plantão')}</span>
+      <span class="badge outline">${escapeHtml(ct)}</span>
       ${sh.hours?`<span class="badge outline">${sh.hours}h</span>`:''}
       <span class="badge" style="background:${color}26;color:${color}">${sh.status}</span>
       <div class="acc">${acc?escapeHtml(acc.name):'—'}</div>
@@ -1211,6 +1292,17 @@ function renderTrabalhos(){
   const mediaPorHora = totalHoras>0 ? totalReceita/totalHoras : 0;
   const totalPendente = pendentes.reduce((s,sh)=>s+(sh.netAmount||sh.grossAmount||0),0);
 
+  // Previsão de recebimento por mês — só Plantão/Outro (exclui Clínica da família)
+  const isPlantaoLike = sh => (sh.contractType||'Plantão') !== 'Clínica da família';
+  const months8 = lastNMonthKeys(2).concat( // 2 meses passados + 6 futuros
+    (()=>{ const out=[]; const now=new Date(); for(let i=1;i<=6;i++){ const d=new Date(now.getFullYear(),now.getMonth()+i,1); out.push({key:d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'), label:d.toLocaleDateString('pt-BR',{month:'short',year:'2-digit'})}); } return out; })()
+  );
+  const forecastRows = months8.map(m=>{
+    const previsto = data.shifts.filter(sh=>isPlantaoLike(sh) && sh.status!=='Recebido' && monthKey(sh.expectedDate||sh.date)===m.key).reduce((s,sh)=>s+(sh.netAmount||sh.grossAmount||0),0);
+    const recebido = data.shifts.filter(sh=>isPlantaoLike(sh) && sh.status==='Recebido' && monthKey(sh.actualDate||sh.date)===m.key).reduce((s,sh)=>s+(sh.netAmount||sh.grossAmount||0),0);
+    return {label:m.label, previsto, recebido};
+  }).filter(r=>r.previsto>0 || r.recebido>0);
+
   el.innerHTML = `
     <div class="page-head">
       <div><h1>Plantões & Trabalhos</h1><p>${list.length} registro(s)</p></div>
@@ -1224,24 +1316,39 @@ function renderTrabalhos(){
       <div class="chip"><div class="lbl">Média por hora</div><div class="val">${fmtMoney(mediaPorHora)}</div></div>
       <div class="chip"><div class="lbl">Valores pendentes</div><div class="val" style="color:var(--amber)">${fmtMoney(totalPendente)}</div></div>
     </div>
+
+    ${forecastRows.length ? `
+    <section class="block">
+      <div class="block-head"><h3>Quanto vou receber por mês (plantões, sem contar a clínica)</h3></div>
+      <div class="panel" style="overflow-x:auto;">
+        <table class="datatable">
+          <thead><tr><th>Mês</th><th style="text-align:right;">Ainda a receber</th><th style="text-align:right;">Já recebido</th><th style="text-align:right;">Total do mês</th></tr></thead>
+          <tbody>
+            ${forecastRows.map(r=>`<tr><td>${r.label}</td><td class="num" style="text-align:right;color:var(--amber);">${fmtMoney(r.previsto)}</td><td class="num pos" style="text-align:right;">${fmtMoney(r.recebido)}</td><td class="num" style="text-align:right;font-weight:700;">${fmtMoney(r.previsto+r.recebido)}</td></tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </section>` : ''}
+
     <div class="ledger">
       ${list.length ? list.map(shiftCardRow).join('') : '<div class="empty">Nenhum plantão cadastrado ainda. Quando você começar o CLT, pode registrar a remuneração aqui também.</div>'}
     </div>
   `;
 }
-function openShiftModal(id){
+function openShiftModal(id, prefillDate){
   const s = id ? data.shifts.find(x=>x.id===id) : null;
   openModalWith(`
     <h3>${s?'Editar plantão/trabalho':'Novo plantão/trabalho'}</h3>
     <div class="field-row">
-      <div class="field"><label>Data</label><input id="f_date" type="date" value="${s?s.date:todayStr()}"></div>
+      <div class="field"><label>Data</label><input id="f_date" type="date" value="${s?s.date:(prefillDate||todayStr())}"></div>
       <div class="field"><label>Status</label><select id="f_status">${SHIFT_STATUS.map(x=>`<option ${s&&s.status===x?'selected':''}>${x}</option>`).join('')}</select></div>
     </div>
-    <div class="field"><label>Local / Hospital</label><input id="f_location" value="${s?escapeHtml(s.location||''):''}" placeholder="Ex: HMAS"></div>
     <div class="field-row">
-      <div class="field"><label>Tipo de trabalho</label><input id="f_worktype" value="${s?escapeHtml(s.workType||''):''}" placeholder="Ex: Plantão noturno, RPA, CLT"></div>
+      <div class="field"><label>Tipo de contrato</label><select id="f_contracttype">${CONTRACT_TYPES.map(x=>`<option ${(s?(s.contractType||'Plantão'):'Plantão')===x?'selected':''}>${x}</option>`).join('')}</select></div>
       <div class="field"><label>Horas trabalhadas</label><input id="f_hours" type="number" step="0.5" value="${s?s.hours||'':''}" placeholder="12"></div>
     </div>
+    <div class="field"><label>Local / Hospital</label><input id="f_location" value="${s?escapeHtml(s.location||''):''}" placeholder="Ex: HMAS"></div>
+    <div class="field"><label>Tipo de trabalho</label><input id="f_worktype" value="${s?escapeHtml(s.workType||''):''}" placeholder="Ex: Plantão noturno, RPA, CLT"></div>
     <div class="field-row">
       <div class="field"><label>Valor bruto (R$)</label><input id="f_gross" type="number" step="0.01" value="${s?s.grossAmount||'':''}" placeholder="0,00"></div>
       <div class="field"><label>Valor líquido (R$)</label><input id="f_net" type="number" step="0.01" value="${s?s.netAmount||'':''}" placeholder="0,00"></div>
@@ -1268,6 +1375,7 @@ function saveShift(id){
   if(!date || !location){ toast('Preencha data e local.'); return; }
   const payload = {
     date, location,
+    contractType: document.getElementById('f_contracttype').value,
     workType: document.getElementById('f_worktype').value.trim(),
     hours: parseFloat(document.getElementById('f_hours').value)||0,
     grossAmount: parseFloat(document.getElementById('f_gross').value)||0,
@@ -1283,6 +1391,119 @@ function saveShift(id){
   if(id){ Object.assign(data.shifts.find(x=>x.id===id), payload); }
   else{ data.shifts.push(Object.assign({id:uid()}, payload)); }
   closeModal(); renderAll(); scheduleSave(); toast('Plantão salvo.');
+}
+
+/* =========================================================
+   RENDER: AGENDA DE PLANTÕES
+========================================================= */
+let agendaState = { year: new Date().getFullYear(), month: new Date().getMonth() };
+const WEEKDAY_NAMES = ['Domingo','Segunda','Terça','Quarta','Quinta','Sexta','Sábado'];
+function toggleAvailability(dow, period){
+  data.availability.weekTemplate[dow][period] = !data.availability.weekTemplate[dow][period];
+  renderAgenda(); scheduleSave();
+}
+function updateAvailabilityNote(dow, value){
+  data.availability.weekTemplate[dow].note = value;
+  scheduleSave();
+}
+function renderAvailabilityEditor(){
+  return `
+    <div class="panel" style="margin-bottom:22px;">
+      <div class="block-head" style="margin-bottom:10px;"><h3>Disponibilidade semanal (padrão)</h3></div>
+      <p style="color:var(--text-muted);font-size:12.5px;margin:0 0 14px 0;">Marque os períodos em que costuma estar livre para plantão. Isso é só um padrão — pode mudar quando quiser, e cada dia específico ainda pode ter um plantão marcado por cima.</p>
+      ${WEEKDAY_NAMES.map((name,dow)=>{
+        const a = data.availability.weekTemplate[dow];
+        return `
+        <div style="display:flex;align-items:center;gap:8px;padding:9px 0;border-bottom:1px solid var(--border);flex-wrap:wrap;">
+          <div style="width:86px;font-size:13px;color:var(--text);flex-shrink:0;">${name}</div>
+          <button class="btn ${a.manha?'accent':'ghost'} sm" onclick="toggleAvailability(${dow},'manha')">Manhã</button>
+          <button class="btn ${a.tarde?'accent':'ghost'} sm" onclick="toggleAvailability(${dow},'tarde')">Tarde</button>
+          <button class="btn ${a.noite?'accent':'ghost'} sm" onclick="toggleAvailability(${dow},'noite')">Noite</button>
+          <input style="flex:1;min-width:120px;background:var(--surface);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:7px;font-size:12px;" placeholder="nota (opcional)" value="${escapeHtml(a.note||'')}" onchange="updateAvailabilityNote(${dow}, this.value)">
+        </div>`;
+      }).join('')}
+    </div>
+  `;
+}
+function renderAgendaCalendar(){
+  const {year, month} = agendaState;
+  const first = new Date(year, month, 1);
+  const startDow = first.getDay();
+  const daysInMonth = new Date(year, month+1, 0).getDate();
+  const cells = [];
+  for(let i=0;i<startDow;i++) cells.push(null);
+  for(let d=1; d<=daysInMonth; d++) cells.push(d);
+  while(cells.length % 7 !== 0) cells.push(null);
+  const todayStrVal = todayStr();
+  let html = '<div class="agenda-grid">';
+  ['D','S','T','Q','Q','S','S'].forEach(d=> html += `<div class="agenda-dow">${d}</div>`);
+  cells.forEach(d=>{
+    if(d===null){ html += '<div class="agenda-cell empty"></div>'; return; }
+    const dateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const dow = new Date(year,month,d).getDay();
+    const avail = data.availability.weekTemplate[dow];
+    const isAvail = avail.manha || avail.tarde || avail.noite;
+    const shiftsOnDay = data.shifts.filter(sh=>sh.date===dateStr);
+    const isToday = dateStr===todayStrVal;
+    html += `
+      <div class="agenda-cell ${isAvail?'avail':'unavail'} ${isToday?'today':''}" onclick="openDayModal('${dateStr}')">
+        <div class="agenda-daynum">${d}</div>
+        ${shiftsOnDay.length ? `<div class="agenda-dot"></div>` : ''}
+      </div>`;
+  });
+  html += '</div>';
+  return html;
+}
+function renderAgenda(){
+  const el = document.getElementById('page-agenda');
+  const monthLabel = new Date(agendaState.year, agendaState.month, 1).toLocaleDateString('pt-BR',{month:'long',year:'numeric'});
+  el.innerHTML = `
+    <div class="page-head"><div><h1>Agenda de Plantões</h1><p>Sua disponibilidade padrão e os plantões já marcados</p></div></div>
+    ${renderAvailabilityEditor()}
+    <section class="block">
+      <div class="block-head">
+        <h3>Calendário</h3>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <button class="btn ghost sm" onclick="changeAgendaMonth(-1)">‹</button>
+          <span style="font-size:13px;color:var(--text-muted);text-transform:capitalize;min-width:130px;text-align:center;">${monthLabel}</span>
+          <button class="btn ghost sm" onclick="changeAgendaMonth(1)">›</button>
+        </div>
+      </div>
+      <div class="panel">
+        ${renderAgendaCalendar()}
+        <div class="legend" style="margin-top:14px;"><span><i style="background:rgba(0,230,160,0.35)"></i>Disponível (algum período)</span><span><i style="background:var(--mint)"></i>Já tem plantão marcado</span></div>
+      </div>
+    </section>
+  `;
+}
+function changeAgendaMonth(delta){
+  agendaState.month += delta;
+  if(agendaState.month<0){ agendaState.month=11; agendaState.year--; }
+  if(agendaState.month>11){ agendaState.month=0; agendaState.year++; }
+  renderAgenda();
+}
+function openDayModal(dateStr){
+  const dow = new Date(dateStr+'T00:00:00').getDay();
+  const avail = data.availability.weekTemplate[dow];
+  const shiftsOnDay = data.shifts.filter(sh=>sh.date===dateStr);
+  openModalWith(`
+    <h3>${WEEKDAY_NAMES[dow]}, ${fmtDate(dateStr)}</h3>
+    <div class="chipgrid" style="margin-bottom:16px;">
+      <div class="chip"><div class="lbl">Manhã</div><div class="val" style="color:${avail.manha?'var(--mint)':'var(--text-muted)'}">${avail.manha?'Disponível':'Ocupada'}</div></div>
+      <div class="chip"><div class="lbl">Tarde</div><div class="val" style="color:${avail.tarde?'var(--mint)':'var(--text-muted)'}">${avail.tarde?'Disponível':'Ocupada'}</div></div>
+      <div class="chip"><div class="lbl">Noite</div><div class="val" style="color:${avail.noite?'var(--mint)':'var(--text-muted)'}">${avail.noite?'Disponível':'Ocupada'}</div></div>
+    </div>
+    ${avail.note ? `<p style="color:var(--text-muted);font-size:12.5px;margin:-8px 0 14px 0;">${escapeHtml(avail.note)}</p>` : ''}
+    ${shiftsOnDay.length ? `
+      <div class="ledger" style="margin-bottom:16px;">
+        ${shiftsOnDay.map(sh=>`
+          <div class="row"><div class="desc"><div class="t">${escapeHtml(sh.location||sh.contractType||'Plantão')}</div></div><span class="badge outline">${sh.status}</span><div class="amt num pos">${fmtMoney(sh.netAmount||sh.grossAmount||0)}</div></div>`).join('')}
+      </div>` : '<div class="empty" style="padding:6px 0 16px 0;">Nenhum plantão registrado neste dia ainda.</div>'}
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal()">Fechar</button>
+      <button class="btn accent" onclick="closeModal(); openShiftModal(null, '${dateStr}')">Registrar plantão neste dia</button>
+    </div>
+  `);
 }
 
 /* =========================================================
@@ -2614,10 +2835,20 @@ function renderTutorial(){
     ${tutoSection('Plantões & Trabalhos', `
       <p>Área específica para sua atividade médica — mais detalhada que um lançamento comum.</p>
       <ul>
-        <li>Registre local, tipo de trabalho, horas, valor bruto/líquido, pagador e status (Previsto, Recebido, Atrasado).</li>
+        <li>Registre local, tipo de trabalho, horas, valor bruto/líquido, pagador e status (Previsto, Recebido, Atrasado). O campo <b>Tipo de contrato</b> (Plantão, Clínica da família, Outro) separa o que é plantão do trabalho fixo.</li>
         <li>O app calcula sozinho: quantidade de plantões, horas trabalhadas, receita recebida, <b>média por plantão</b> e <b>média por hora</b>, e valores pendentes.</li>
-        <li>Plantões com status "Recebido" já entram automaticamente como receita — aparecem no Painel, no DRE e também nas abas <b>Lançamentos</b> e <b>Receitas</b>, marcados com um selo "plantão". Não precisa duplicar lançando de novo; para editar ou excluir, faça isso aqui em Plantões (o botão de editar nessas linhas te traz direto pra cá).</li>
+        <li>A tabela <b>"Quanto vou receber por mês"</b> mostra a previsão de recebimento só dos plantões (sem a clínica), mês a mês, usando a data prevista de pagamento.</li>
+        <li>Plantões com status "Recebido" já entram automaticamente como receita — aparecem no Painel, no DRE e também nas abas <b>Lançamentos</b> e <b>Receitas</b>, marcados com um selo. Não precisa duplicar lançando de novo; para editar ou excluir, faça isso aqui em Plantões (o botão de editar nessas linhas te traz direto pra cá).</li>
         <li>Quando você começar o CLT, pode registrar a remuneração aqui também, sem precisar de uma área nova.</li>
+      </ul>
+    `)}
+
+    ${tutoSection('Agenda de Plantões', `
+      <p>Pensada pra quando alguém te oferece um plantão e você precisa checar rápido se tem disponibilidade.</p>
+      <ul>
+        <li><b>Disponibilidade semanal</b>: marque Manhã/Tarde/Noite disponíveis para cada dia da semana (ex: quarta de day off, fins de semana, algumas noites). É um padrão editável a qualquer momento.</li>
+        <li><b>Calendário</b>: dias com fundo esverdeado indicam que aquele dia da semana costuma estar livre; uma bolinha indica que já existe um plantão marcado naquela data específica.</li>
+        <li>Clique em qualquer dia para ver o detalhe e, se quiser, clicar em <b>"Registrar plantão neste dia"</b> — abre o formulário já com a data preenchida.</li>
       </ul>
     `)}
 
@@ -2704,6 +2935,7 @@ function renderAll(){
   renderLancamentos();
   renderReceitas();
   renderTrabalhos();
+  renderAgenda();
   renderOrcamento();
   renderDRE();
   renderInvestimentos();
