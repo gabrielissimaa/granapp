@@ -781,9 +781,17 @@ function shiftPendingAmount(sh){
 }
 
 function receitasInRange(range){
-  const txSum = data.transactions.filter(t=>t.type==='receita' && inRange(t.date,range)).reduce((s,t)=>s+t.amount,0);
+  const txSum = data.transactions.filter(t=>t.type==='receita' && inRange(t.date,range) && (t.status||'Recebido')!=='Previsto').reduce((s,t)=>s+t.amount,0);
   const shiftSum = data.shifts.filter(sh=>(sh.status==='Recebido'||sh.status==='Parcial') && inRange(sh.actualDate||sh.date,range)).reduce((s,sh)=>s+shiftReceivedAmount(sh),0);
   return txSum + shiftSum;
+}
+function receitaPendenteInRange(range){
+  const txSum = data.transactions.filter(t=>t.type==='receita' && inRange(t.date,range) && t.status==='Previsto').reduce((s,t)=>s+t.amount,0);
+  const shiftSum = data.shifts.filter(sh=>(sh.status==='Previsto'||sh.status==='Atrasado') && inRange(sh.expectedDate||sh.date,range)).reduce((s,sh)=>s+shiftPendingAmount(sh),0);
+  return txSum + shiftSum;
+}
+function receitaTotalEsperadaInRange(range){
+  return receitasInRange(range) + receitaPendenteInRange(range);
 }
 function despesasInRange(range, filterFn){
   return data.transactions.filter(t=>t.type==='despesa' && inRange(t.date,range) && (!filterFn||filterFn(t))).reduce((s,t)=>s+t.amount,0);
@@ -1735,10 +1743,12 @@ function renderOrcamento(){
 
   // Quanto ainda posso gastar — baseado no pró-labore, não na receita bruta
   const spReceita = receitasInRange(curRange);
+  const spReceitaPendente = receitaPendenteInRange(curRange);
+  const spReceitaTotalEsperada = spReceita + spReceitaPendente;
   const proLabore = data.settings.proLabore || 0;
   const spGastosTotais = despesasInRange(curRange); // fixos+variáveis, essenciais+não essenciais — tudo desconta do pró-labore
   const spDisponivel = proLabore - spGastosTotais;
-  const metaInvestir = Math.max(0, spReceita - proLabore); // o que sobra da receita além do pró-labore é a meta de investir do mês
+  const metaInvestir = Math.max(0, spReceitaTotalEsperada - proLabore); // meta baseada no que você espera ganhar no mês todo (recebido + a receber), não só o que já caiu
   const investidoReal = investidoInRange(curRange);
   const pctInvestidoMeta = metaInvestir>0 ? Math.min(100, (investidoReal/metaInvestir)*100) : 0;
 
@@ -1794,10 +1804,12 @@ function renderOrcamento(){
     <section class="block">
       <div class="block-head"><h3>Meta de investimento do mês</h3></div>
       <div class="panel" style="max-width:640px;">
-        <p style="color:var(--text-muted);font-size:13px;margin:0 0 14px 0;">O que sobra da receita além do pró-labore (metas não entram aqui — elas já estão vinculadas a um investimento, para não contar duas vezes).</p>
+        <p style="color:var(--text-muted);font-size:13px;margin:0 0 14px 0;">Calculada sobre o que você espera ganhar no mês inteiro (já recebido + ainda a receber), não só o que já caiu na conta. Metas não entram aqui de novo — elas já estão (ou podem estar) vinculadas a um investimento, para não contar duas vezes.</p>
         <table class="datatable" style="margin-bottom:14px;">
           <tbody>
-            <tr><td>Receita do mês</td><td class="num pos" style="text-align:right;">${fmtMoney(spReceita)}</td></tr>
+            <tr><td>Já recebido este mês</td><td class="num pos" style="text-align:right;">${fmtMoney(spReceita)}</td></tr>
+            <tr><td>Ainda a receber este mês</td><td class="num" style="text-align:right;color:var(--amber);">${fmtMoney(spReceitaPendente)}</td></tr>
+            <tr style="font-weight:600;"><td style="border-top:1px solid var(--border);">= Receita total esperada do mês</td><td class="num" style="text-align:right;border-top:1px solid var(--border);">${fmtMoney(spReceitaTotalEsperada)}</td></tr>
             <tr><td>(–) Pró-labore</td><td class="num" style="text-align:right;">${fmtMoney(proLabore)}</td></tr>
             <tr style="font-weight:700;"><td style="border-top:2px solid var(--border-hi);">Meta de investimento do mês</td><td class="num" style="text-align:right;border-top:2px solid var(--border-hi);color:var(--violet);">${fmtMoney(metaInvestir)}</td></tr>
           </tbody>
@@ -1806,7 +1818,7 @@ function renderOrcamento(){
           <div class="split-row-title">Investido até agora</div>
           <div class="progress-bar"><div style="width:${pctInvestidoMeta}%"></div></div>
           <div class="split-legend" style="margin-top:6px;"><span>Investido: <b class="num">${fmtMoney(investidoReal)}</b></span><span>Meta: <b class="num">${fmtMoney(metaInvestir)}</b></span><span><b>${pctInvestidoMeta.toFixed(0)}%</b></span></div>
-        ` : `<div class="infobox">Sem meta de investimento este mês (receita igual ou menor que o pró-labore).</div>`}
+        ` : `<div class="infobox">Sem meta de investimento este mês (receita esperada igual ou menor que o pró-labore).</div>`}
       </div>
     </section>
 
@@ -1880,7 +1892,7 @@ function scopeLabel(s){ return s==='pessoal'?'Pessoal': s==='profissional'?'Prof
 function computeDRE(range, scope){
   const matches = (p) => scope==='consolidado' ? true : p===scope;
 
-  const receitaTx = data.transactions.filter(t=>t.type==='receita' && inRange(t.date,range) && matches(receitaPurpose(t)));
+  const receitaTx = data.transactions.filter(t=>t.type==='receita' && inRange(t.date,range) && matches(receitaPurpose(t)) && (t.status||'Recebido')!=='Previsto');
   const receitaShifts = matches('profissional') ? data.shifts.filter(s=>(s.status==='Recebido'||s.status==='Parcial') && inRange(s.actualDate||s.date,range)) : [];
 
   const receitaBySource = {};
