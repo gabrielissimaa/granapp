@@ -508,7 +508,8 @@ document.getElementById('sidebarOverlay').addEventListener('click', closeSidebar
 const fmtMoney = v => (v<0?'-':'') + 'R$ ' + Math.abs(v||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
 const fmtDate = d => { if(!d) return '—'; const dt = new Date(d+'T00:00:00'); return dt.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'2-digit'}); };
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,8);
-const todayStr = () => new Date().toISOString().slice(0,10);
+function localDateStr(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+const todayStr = () => localDateStr(new Date());
 const monthKey = d => (d||'').slice(0,7);
 function escapeHtml(s){ return String(s??'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function toast(msg){
@@ -533,7 +534,7 @@ function rangeForPeriod(period, customStart, customEnd){
   else if(period==='12m'){ start=new Date(now.getFullYear(),now.getMonth()-11,1); end=new Date(now.getFullYear(),now.getMonth()+1,0); }
   else if(period==='custom'){ start=customStart?new Date(customStart+'T00:00:00'):new Date(now.getFullYear(),now.getMonth(),1); end=customEnd?new Date(customEnd+'T00:00:00'):now; }
   else { start=new Date(now.getFullYear(),now.getMonth(),1); end=new Date(now.getFullYear(),now.getMonth()+1,0); }
-  return { start: start.toISOString().slice(0,10), end: end.toISOString().slice(0,10) };
+  return { start: localDateStr(start), end: localDateStr(end) };
 }
 function inRange(dateStr, range){ return dateStr >= range.start && dateStr <= range.end; }
 
@@ -823,7 +824,7 @@ function generateMonthlySummary(offset){
   const targetDate = new Date(now.getFullYear(), now.getMonth()-offset, 1);
   const isCurrent = offset===0;
   const endDate = isCurrent ? now : new Date(targetDate.getFullYear(), targetDate.getMonth()+1, 0);
-  const range = rangeForPeriod('custom', targetDate.toISOString().slice(0,10), endDate.toISOString().slice(0,10));
+  const range = rangeForPeriod('custom', localDateStr(targetDate), localDateStr(endDate));
   const monthName = targetDate.toLocaleDateString('pt-BR', {month:'long'});
 
   const receita = receitasInRange(range);
@@ -838,7 +839,7 @@ function generateMonthlySummary(offset){
   const maiorCategoria = catSorted[0];
 
   const prevTargetDate = new Date(targetDate.getFullYear(), targetDate.getMonth()-1, 1);
-  const rangePrev = rangeForPeriod('custom', prevTargetDate.toISOString().slice(0,10), new Date(prevTargetDate.getFullYear(), prevTargetDate.getMonth()+1, 0).toISOString().slice(0,10));
+  const rangePrev = rangeForPeriod('custom', localDateStr(prevTargetDate), localDateStr(new Date(prevTargetDate.getFullYear(), prevTargetDate.getMonth()+1, 0)));
   const gastosPrev = despesasInRange(rangePrev);
   const diffGastos = gastosPrev>0 ? ((gastos-gastosPrev)/gastosPrev)*100 : null;
 
@@ -889,7 +890,7 @@ function renderVisao(){
 
   const months = lastNMonthKeys(6);
   const monthData = months.map(m=>{
-    const r = rangeForPeriod('custom', m.key+'-01', new Date(m.year, m.month+1, 0).toISOString().slice(0,10));
+    const r = rangeForPeriod('custom', m.key+'-01', localDateStr(new Date(m.year, m.month+1, 0)));
     return {label:m.label, income:receitasInRange(r), expense:despesasInRange(r), invest:investidoInRange(r)};
   });
   const maxVal = Math.max(1, ...monthData.flatMap(m=>[m.income,m.expense,m.invest]));
@@ -1036,7 +1037,7 @@ function splitRow(title, a, b, labelA, labelB, colorA, colorB){
 function renderAnaliseFinanceira(){
   const months = lastNMonthKeys(6);
   const incomes = months.map(m=>{
-    const r = rangeForPeriod('custom', m.key+'-01', new Date(m.year,m.month+1,0).toISOString().slice(0,10));
+    const r = rangeForPeriod('custom', m.key+'-01', localDateStr(new Date(m.year,m.month+1,0)));
     return receitasInRange(r);
   }).filter(v=>v>0);
   if(incomes.length===0) return '<div class="empty">Sem receitas suficientes ainda.</div>';
@@ -1536,23 +1537,33 @@ function computeShiftGoalProgress(){
   if(!sg || !sg.enabled) return null;
   const startDate = sg.startDate || todayStr();
   const isPlantao = sh => (sh.contractType||'Plantão') === 'Plantão';
-  const doneShifts = data.shifts.filter(sh=> isPlantao(sh) && (sh.status==='Recebido'||sh.status==='Parcial') && sh.date>=startDate && (!sg.deadline || sh.date<=sg.deadline));
+  const inWindow = sh => sh.date>=startDate && (!sg.deadline || sh.date<=sg.deadline);
+  const doneShifts = data.shifts.filter(sh=> isPlantao(sh) && (sh.status==='Recebido'||sh.status==='Parcial') && inWindow(sh));
+  const scheduledShifts = data.shifts.filter(sh=> isPlantao(sh) && (sh.status==='Previsto'||sh.status==='Atrasado') && inWindow(sh));
   const count = doneShifts.length;
+  const scheduledCount = scheduledShifts.length;
+  const progressMode = sg.progressMode || 'feitos'; // 'feitos' | 'feitos_agendados'
+  const countForBar = progressMode==='feitos_agendados' ? count+scheduledCount : count;
   const now = new Date();
   const start = new Date(startDate+'T00:00:00');
   const monthsElapsed = Math.max(1, (now.getFullYear()-start.getFullYear())*12 + (now.getMonth()-start.getMonth()) + 1);
   const avgPerMonth = count/monthsElapsed;
   let pctByCount=null, remaining=null, monthsLeft=null, paceNeeded=null;
   if(sg.targetCount){
-    pctByCount = Math.min(100,(count/sg.targetCount)*100);
-    remaining = Math.max(0, sg.targetCount-count);
+    pctByCount = Math.min(100,(countForBar/sg.targetCount)*100);
+    remaining = Math.max(0, sg.targetCount-countForBar);
     if(sg.deadline){
       const dl = new Date(sg.deadline+'T00:00:00');
       monthsLeft = Math.max(1, Math.ceil((dl-now)/(1000*60*60*24*30)));
       paceNeeded = remaining/monthsLeft;
     }
   }
-  return { count, avgPerMonth, pctByCount, remaining, monthsLeft, paceNeeded, targetCount:sg.targetCount, monthlyRate:sg.monthlyRate, deadline:sg.deadline };
+  return { count, scheduledCount, countForBar, progressMode, avgPerMonth, pctByCount, remaining, monthsLeft, paceNeeded, targetCount:sg.targetCount, monthlyRate:sg.monthlyRate, deadline:sg.deadline };
+}
+function setShiftGoalProgressMode(mode){
+  data.shiftGoal.progressMode = mode;
+  scheduleSave();
+  renderAgenda();
 }
 function setShiftGoalEnabled(v){
   data.shiftGoal.enabled = v;
@@ -1570,7 +1581,7 @@ function updateShiftGoalField(field, value){
 }
 function setShiftGoalStartToBeginningOfMonth(){
   const now = new Date();
-  const first = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0,10);
+  const first = localDateStr(new Date(now.getFullYear(), now.getMonth(), 1));
   data.shiftGoal.startDate = first;
   scheduleSave();
   renderAgenda();
@@ -1602,11 +1613,19 @@ function renderShiftGoalSection(){
           ${progress ? `
             <div class="chipgrid" style="margin-top:14px;">
               <div class="chip"><div class="lbl">Feitos até agora</div><div class="val">${progress.count}${progress.targetCount?` de ${progress.targetCount}`:''}</div></div>
+              <div class="chip"><div class="lbl">Agendados até agora</div><div class="val" style="color:var(--amber)">${progress.scheduledCount}</div></div>
               <div class="chip"><div class="lbl">Ritmo atual</div><div class="val">${progress.avgPerMonth.toFixed(1)}/mês</div></div>
               ${progress.paceNeeded!=null ? `<div class="chip"><div class="lbl">Ritmo necessário até o prazo</div><div class="val" style="color:${progress.avgPerMonth>=progress.paceNeeded?'var(--mint)':'var(--amber)'}">${progress.paceNeeded.toFixed(1)}/mês</div></div>` : ''}
               ${progress.monthlyRate ? `<div class="chip"><div class="lbl">Meta de ritmo</div><div class="val" style="color:${progress.avgPerMonth>=progress.monthlyRate?'var(--mint)':'var(--amber)'}">${progress.monthlyRate}/mês</div></div>` : ''}
             </div>
-            ${progress.pctByCount!=null ? `<div class="progress-bar" style="margin-top:12px;"><div style="width:${progress.pctByCount}%"></div></div><div class="meta" style="margin-top:4px;">${progress.pctByCount.toFixed(0)}% concluído</div>` : ''}
+            ${progress.targetCount ? `
+              <div class="split-row-title" style="margin-top:14px;">A barra abaixo considera</div>
+              <div class="toggle-row" style="max-width:320px;margin-bottom:8px;">
+                <button class="${progress.progressMode==='feitos'?'on':''}" onclick="setShiftGoalProgressMode('feitos')">Só feitos</button>
+                <button class="${progress.progressMode==='feitos_agendados'?'on':''}" onclick="setShiftGoalProgressMode('feitos_agendados')">Feitos + agendados</button>
+              </div>
+            ` : ''}
+            ${progress.pctByCount!=null ? `<div class="progress-bar" style="margin-top:8px;"><div style="width:${progress.pctByCount}%"></div></div><div class="meta" style="margin-top:4px;">${progress.pctByCount.toFixed(0)}% concluído (${progress.countForBar} de ${progress.targetCount}${progress.progressMode==='feitos_agendados'?' — feitos + agendados':' — só feitos'})</div>` : ''}
           ` : `<div class="infobox" style="margin-top:10px;">Marque plantões como "Recebido" ou "Parcial" (tipo de contrato "Plantão"), com data igual ou depois de "Contar a partir de", para o progresso começar a contar.</div>`}
         ` : ''}
       </div>
@@ -1726,7 +1745,7 @@ function renderOrcamento(){
   // Histórico dos últimos meses (efetivo x deveria ser)
   const historyMonths = lastNMonthKeys(6);
   const historyRows = historyMonths.map(m=>{
-    const r = rangeForPeriod('custom', m.key+'-01', new Date(m.year,m.month+1,0).toISOString().slice(0,10));
+    const r = rangeForPeriod('custom', m.key+'-01', localDateStr(new Date(m.year,m.month+1,0)));
     const rec = receitasInRange(r);
     const ess = despesasInRange(r, t=>t.essential==='essencial');
     const nao = despesasInRange(r, t=>t.essential==='nao-essencial');
