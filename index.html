@@ -1560,7 +1560,18 @@ function setShiftGoalEnabled(v){
   renderAgenda(); scheduleSave();
 }
 function updateShiftGoalField(field, value){
-  data.shiftGoal[field] = field==='deadline' ? (value||null) : (parseFloat(value)||null);
+  if(field==='deadline' || field==='startDate'){
+    data.shiftGoal[field] = value || null;
+  } else {
+    data.shiftGoal[field] = parseFloat(value) || null;
+  }
+  scheduleSave();
+  renderAgenda();
+}
+function setShiftGoalStartToBeginningOfMonth(){
+  const now = new Date();
+  const first = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0,10);
+  data.shiftGoal.startDate = first;
   scheduleSave();
   renderAgenda();
 }
@@ -1583,7 +1594,11 @@ function renderShiftGoalSection(){
             <div class="field"><label>Quantos plantões</label><input type="number" step="1" value="${sg.targetCount||''}" placeholder="Ex: 10" onchange="updateShiftGoalField('targetCount', this.value)"></div>
             <div class="field"><label>Até quando (opcional)</label><input type="date" value="${sg.deadline||''}" onchange="updateShiftGoalField('deadline', this.value)"></div>
           </div>
-          <div class="field" style="max-width:220px;"><label>E/ou quantos por mês</label><input type="number" step="1" value="${sg.monthlyRate||''}" placeholder="Ex: 4" onchange="updateShiftGoalField('monthlyRate', this.value)"></div>
+          <div class="field-row">
+            <div class="field"><label>Contar a partir de</label><input type="date" value="${sg.startDate||todayStr()}" onchange="updateShiftGoalField('startDate', this.value)"></div>
+            <div class="field" style="max-width:220px;"><label>E/ou quantos por mês</label><input type="number" step="1" value="${sg.monthlyRate||''}" placeholder="Ex: 4" onchange="updateShiftGoalField('monthlyRate', this.value)"></div>
+          </div>
+          <button class="btn ghost sm" onclick="setShiftGoalStartToBeginningOfMonth()">Contar desde o início deste mês</button>
           ${progress ? `
             <div class="chipgrid" style="margin-top:14px;">
               <div class="chip"><div class="lbl">Feitos até agora</div><div class="val">${progress.count}${progress.targetCount?` de ${progress.targetCount}`:''}</div></div>
@@ -1592,7 +1607,7 @@ function renderShiftGoalSection(){
               ${progress.monthlyRate ? `<div class="chip"><div class="lbl">Meta de ritmo</div><div class="val" style="color:${progress.avgPerMonth>=progress.monthlyRate?'var(--mint)':'var(--amber)'}">${progress.monthlyRate}/mês</div></div>` : ''}
             </div>
             ${progress.pctByCount!=null ? `<div class="progress-bar" style="margin-top:12px;"><div style="width:${progress.pctByCount}%"></div></div><div class="meta" style="margin-top:4px;">${progress.pctByCount.toFixed(0)}% concluído</div>` : ''}
-          ` : `<div class="infobox" style="margin-top:10px;">Marque plantões como "Recebido" ou "Parcial" (tipo de contrato "Plantão") para o progresso começar a contar.</div>`}
+          ` : `<div class="infobox" style="margin-top:10px;">Marque plantões como "Recebido" ou "Parcial" (tipo de contrato "Plantão"), com data igual ou depois de "Contar a partir de", para o progresso começar a contar.</div>`}
         ` : ''}
       </div>
     </details>
