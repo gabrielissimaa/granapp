@@ -1733,22 +1733,21 @@ function renderOrcamento(){
   const now = new Date();
   const curKey = now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
 
-  // Quanto posso gastar — acompanhamento em tempo real do mês atual
+  // Quanto ainda posso gastar — baseado no pró-labore, não na receita bruta
   const spReceita = receitasInRange(curRange);
-  const spInvestido = investidoInRange(curRange);
-  const spMetas = data.goals.reduce((s,g)=>s+goalMonthlyContributed(g, curKey),0);
-  const spGuardar = spInvestido + spMetas;
-  const spFixas = despesasInRange(curRange, t=>t.fixedVariable==='fixo');
-  const spVariavelGasto = despesasInRange(curRange, t=>t.fixedVariable==='variavel');
-  const spOrcamentoVariavel = spReceita - spGuardar - spFixas;
-  const spDisponivel = spOrcamentoVariavel - spVariavelGasto;
+  const proLabore = data.settings.proLabore || 0;
+  const spGastosTotais = despesasInRange(curRange); // fixos+variáveis, essenciais+não essenciais — tudo desconta do pró-labore
+  const spDisponivel = proLabore - spGastosTotais;
+  const metaInvestir = Math.max(0, spReceita - proLabore); // o que sobra da receita além do pró-labore é a meta de investir do mês
+  const investidoReal = investidoInRange(curRange);
+  const pctInvestidoMeta = metaInvestir>0 ? Math.min(100, (investidoReal/metaInvestir)*100) : 0;
 
   // % projetado x realizado (essencial / não essencial / investimentos), com base na categorização feita ao lançar
   const essencial = despesasInRange(curRange, t=>t.essential==='essencial');
   const naoEssencial = despesasInRange(curRange, t=>t.essential==='nao-essencial');
   const pctEssencialReal = spReceita>0 ? (essencial/spReceita)*100 : 0;
   const pctNaoEssencialReal = spReceita>0 ? (naoEssencial/spReceita)*100 : 0;
-  const pctInvestidoReal = spReceita>0 ? (spInvestido/spReceita)*100 : 0;
+  const pctInvestidoReal = spReceita>0 ? (investidoReal/spReceita)*100 : 0;
   const targets = data.settings.budgetTargets || {essencial:50, naoEssencial:30, investido:20};
   const semClassificar = data.transactions.filter(t=>t.type==='despesa' && inRange(t.date,curRange) && !t.essential).length;
 
@@ -1773,23 +1772,41 @@ function renderOrcamento(){
     <div class="page-head"><div><h1>Orçamento</h1><p>Acompanhamento do mês atual</p></div></div>
 
     <section class="block">
-      <div class="block-head"><h3>Quanto posso gastar este mês</h3></div>
+      <div class="block-head"><h3>Quanto ainda posso gastar</h3></div>
       <div class="panel" style="max-width:640px;">
-        <p style="color:var(--text-muted);font-size:13px;margin:0 0 16px 0;">Vai descontando conforme você lança gastos — é um acompanhamento do que já aconteceu no mês, não uma previsão fixa.</p>
-        <table class="datatable" style="margin-bottom:14px;">
+        <p style="color:var(--text-muted);font-size:13px;margin:0 0 14px 0;">Baseado no seu pró-labore — o que sobra da receita além dele vai para investimentos, com sua própria meta mensal logo abaixo.</p>
+        <div class="field" style="max-width:280px;margin-bottom:16px;"><label>Meu pró-labore mensal (R$)</label><input type="number" step="10" value="${proLabore||''}" placeholder="Quanto você vai poder gastar" onchange="updateProLabore(this.value)"></div>
+        <table class="datatable" style="margin-bottom:6px;">
           <tbody>
-            <tr><td>Receita do mês</td><td class="num pos" style="text-align:right;">${fmtMoney(spReceita)}</td></tr>
-            <tr><td>(–) Guardado até agora (metas + investimentos)</td><td class="num" style="text-align:right;color:var(--violet);">${fmtMoney(spGuardar)}</td></tr>
-            <tr><td>(–) Despesas fixas do mês</td><td class="num neg" style="text-align:right;">${fmtMoney(spFixas)}</td></tr>
-            <tr><td>(–) Gastos variáveis já feitos</td><td class="num neg" style="text-align:right;">${fmtMoney(spVariavelGasto)}</td></tr>
+            <tr><td>Pró-labore</td><td class="num pos" style="text-align:right;">${fmtMoney(proLabore)}</td></tr>
+            <tr><td>(–) Gastos do mês (fixos, variáveis, essenciais e não essenciais)</td><td class="num neg" style="text-align:right;">${fmtMoney(spGastosTotais)}</td></tr>
             <tr style="font-weight:700;"><td style="border-top:2px solid var(--border-hi);">Ainda disponível para gastar</td><td class="num" style="text-align:right;border-top:2px solid var(--border-hi);color:${spDisponivel>=0?'var(--mint)':'var(--coral)'};">${fmtMoney(spDisponivel)}</td></tr>
           </tbody>
         </table>
-        ${spOrcamentoVariavel>0 ? `
-          <div class="split-row-title">Uso do espaço para gastos variáveis</div>
-          <div class="split"><div style="width:${Math.min(100,(spVariavelGasto/spOrcamentoVariavel)*100)}%;background:${spVariavelGasto>spOrcamentoVariavel?'var(--coral)':'var(--mint)'}"></div></div>
-          <div class="split-legend"><span>Gasto: <b class="num">${fmtMoney(spVariavelGasto)}</b></span><span>Livre: <b class="num">${fmtMoney(Math.max(0,spDisponivel))}</b></span></div>
-        ` : ''}
+        ${proLabore>0 ? `
+          <div class="split-row-title" style="margin-top:10px;">Uso do pró-labore</div>
+          <div class="split"><div style="width:${Math.min(100,(spGastosTotais/proLabore)*100)}%;background:${spGastosTotais>proLabore?'var(--coral)':'var(--mint)'}"></div></div>
+          <div class="split-legend"><span>Gasto: <b class="num">${fmtMoney(spGastosTotais)}</b></span><span>Livre: <b class="num">${fmtMoney(Math.max(0,spDisponivel))}</b></span></div>
+        ` : `<div class="infobox" style="margin-top:6px;">Preencha seu pró-labore acima para começar a acompanhar.</div>`}
+      </div>
+    </section>
+
+    <section class="block">
+      <div class="block-head"><h3>Meta de investimento do mês</h3></div>
+      <div class="panel" style="max-width:640px;">
+        <p style="color:var(--text-muted);font-size:13px;margin:0 0 14px 0;">O que sobra da receita além do pró-labore (metas não entram aqui — elas já estão vinculadas a um investimento, para não contar duas vezes).</p>
+        <table class="datatable" style="margin-bottom:14px;">
+          <tbody>
+            <tr><td>Receita do mês</td><td class="num pos" style="text-align:right;">${fmtMoney(spReceita)}</td></tr>
+            <tr><td>(–) Pró-labore</td><td class="num" style="text-align:right;">${fmtMoney(proLabore)}</td></tr>
+            <tr style="font-weight:700;"><td style="border-top:2px solid var(--border-hi);">Meta de investimento do mês</td><td class="num" style="text-align:right;border-top:2px solid var(--border-hi);color:var(--violet);">${fmtMoney(metaInvestir)}</td></tr>
+          </tbody>
+        </table>
+        ${metaInvestir>0 ? `
+          <div class="split-row-title">Investido até agora</div>
+          <div class="progress-bar"><div style="width:${pctInvestidoMeta}%"></div></div>
+          <div class="split-legend" style="margin-top:6px;"><span>Investido: <b class="num">${fmtMoney(investidoReal)}</b></span><span>Meta: <b class="num">${fmtMoney(metaInvestir)}</b></span><span><b>${pctInvestidoMeta.toFixed(0)}%</b></span></div>
+        ` : `<div class="infobox">Sem meta de investimento este mês (receita igual ou menor que o pró-labore).</div>`}
       </div>
     </section>
 
@@ -1847,6 +1864,12 @@ function updateBudgetTarget(key, value){
   if(!data.settings.budgetTargets) data.settings.budgetTargets = {essencial:50, naoEssencial:30, investido:20};
   data.settings.budgetTargets[key] = isNaN(v) ? 0 : v;
   scheduleSave();
+}
+function updateProLabore(value){
+  const v = parseFloat(value);
+  data.settings.proLabore = isNaN(v) ? 0 : v;
+  scheduleSave();
+  renderOrcamento();
 }
 
 /* =========================================================
@@ -3076,9 +3099,10 @@ function renderTutorial(){
     `)}
 
     ${tutoSection('Orçamento', `
-      <p>Foi simplificado pra ser direto ao ponto, com duas partes:</p>
+      <p>Tem três partes, nessa ordem:</p>
       <ul>
-        <li><b>Quanto posso gastar este mês</b>: acompanhamento em tempo real — receita do mês, menos o que você já guardou (metas + investimentos), menos despesas fixas, menos gastos variáveis já feitos. O número final vai diminuindo conforme você lança gastos ao longo do mês.</li>
+        <li><b>Quanto ainda posso gastar</b>: você informa seu <b>pró-labore mensal</b> (quanto vai poder gastar de fato). Todas as despesas do mês (fixas, variáveis, essenciais ou não) descontam desse valor — o número final é o que ainda sobra pra gastar, e vai diminuindo conforme você lança gastos.</li>
+        <li><b>Meta de investimento do mês</b>: o que sobra da sua receita além do pró-labore vira automaticamente a meta de quanto investir naquele mês, com uma barra mostrando quanto você já investiu perto dessa meta. As metas da aba Metas não entram aqui de novo — como cada meta já está (ou pode estar) vinculada a um investimento, contar as duas coisas seria duplicar o mesmo dinheiro.</li>
         <li><b>% projetado x realizado</b>: compara a porcentagem da sua renda que você planeja gastar com essenciais, não essenciais e investimentos contra o que de fato aconteceu no mês, com base na classificação que você já faz ao lançar cada despesa. Se houver despesas sem essa classificação, o app avisa.</li>
       </ul>
     `)}
