@@ -1588,12 +1588,38 @@ function setShiftGoalStartToBeginningOfMonth(){
 }
 function onShiftGoalDetailsToggle(el){ shiftGoalEditorOpen = el.open; }
 let shiftGoalEditorOpen = false;
-function renderShiftGoalSection(){
+function renderShiftGoalProgressBar(){
   const sg = data.shiftGoal;
+  if(!sg.enabled) return '';
   const progress = computeShiftGoalProgress();
+  if(!progress) return '';
+  return `
+    <div class="panel" style="margin-bottom:22px;max-width:none;">
+      <div class="block-head" style="margin-bottom:10px;"><h3>Meta de plantões</h3></div>
+      <div class="chipgrid">
+        <div class="chip"><div class="lbl">Feitos até agora</div><div class="val">${progress.count}${progress.targetCount?` de ${progress.targetCount}`:''}</div></div>
+        <div class="chip"><div class="lbl">Agendados até agora</div><div class="val" style="color:var(--amber)">${progress.scheduledCount}</div></div>
+        <div class="chip"><div class="lbl">Ritmo atual</div><div class="val">${progress.avgPerMonth.toFixed(1)}/mês</div></div>
+        ${progress.paceNeeded!=null ? `<div class="chip"><div class="lbl">Ritmo necessário até o prazo</div><div class="val" style="color:${progress.avgPerMonth>=progress.paceNeeded?'var(--mint)':'var(--amber)'}">${progress.paceNeeded.toFixed(1)}/mês</div></div>` : ''}
+        ${progress.monthlyRate ? `<div class="chip"><div class="lbl">Meta de ritmo</div><div class="val" style="color:${progress.avgPerMonth>=progress.monthlyRate?'var(--mint)':'var(--amber)'}">${progress.monthlyRate}/mês</div></div>` : ''}
+      </div>
+      ${progress.targetCount ? `
+        <div class="split-row-title" style="margin-top:14px;">A barra abaixo considera</div>
+        <div class="toggle-row" style="max-width:320px;margin-bottom:8px;">
+          <button class="${progress.progressMode==='feitos'?'on':''}" onclick="setShiftGoalProgressMode('feitos')">Só feitos</button>
+          <button class="${progress.progressMode==='feitos_agendados'?'on':''}" onclick="setShiftGoalProgressMode('feitos_agendados')">Feitos + agendados</button>
+        </div>
+      ` : ''}
+      ${progress.pctByCount!=null ? `<div class="progress-bar" style="margin-top:8px;"><div style="width:${progress.pctByCount}%"></div></div><div class="meta" style="margin-top:4px;">${progress.pctByCount.toFixed(0)}% concluído (${progress.countForBar} de ${progress.targetCount}${progress.progressMode==='feitos_agendados'?' — feitos + agendados':' — só feitos'})</div>` : ''}
+      ${!progress.targetCount && !progress.count && !progress.scheduledCount ? `<div class="infobox" style="margin-top:10px;">Marque plantões como "Recebido"/"Parcial" (feitos) ou "Previsto"/"Atrasado" (agendados), tipo de contrato "Plantão", para o progresso começar a contar.</div>` : ''}
+    </div>
+  `;
+}
+function renderShiftGoalEditor(){
+  const sg = data.shiftGoal;
   return `
     <details class="tuto-section" style="margin-bottom:22px;max-width:none;" ${shiftGoalEditorOpen?'open':''} ontoggle="onShiftGoalDetailsToggle(this)">
-      <summary>Meta de plantões<span class="plus">+</span></summary>
+      <summary>Configurar meta de plantões<span class="plus">+</span></summary>
       <div class="tuto-body">
         <p style="color:var(--text-muted);font-size:12.5px;margin:0 0 12px 0;">Deseja estabelecer uma meta de plantões? Informe quantos, até quando e/ou quantos por mês, para ter noção da quantidade num período de tempo.</p>
         <div class="toggle-row" style="max-width:200px;margin-bottom:14px;">
@@ -1610,23 +1636,6 @@ function renderShiftGoalSection(){
             <div class="field" style="max-width:220px;"><label>E/ou quantos por mês</label><input type="number" step="1" value="${sg.monthlyRate||''}" placeholder="Ex: 4" onchange="updateShiftGoalField('monthlyRate', this.value)"></div>
           </div>
           <button class="btn ghost sm" onclick="setShiftGoalStartToBeginningOfMonth()">Contar desde o início deste mês</button>
-          ${progress ? `
-            <div class="chipgrid" style="margin-top:14px;">
-              <div class="chip"><div class="lbl">Feitos até agora</div><div class="val">${progress.count}${progress.targetCount?` de ${progress.targetCount}`:''}</div></div>
-              <div class="chip"><div class="lbl">Agendados até agora</div><div class="val" style="color:var(--amber)">${progress.scheduledCount}</div></div>
-              <div class="chip"><div class="lbl">Ritmo atual</div><div class="val">${progress.avgPerMonth.toFixed(1)}/mês</div></div>
-              ${progress.paceNeeded!=null ? `<div class="chip"><div class="lbl">Ritmo necessário até o prazo</div><div class="val" style="color:${progress.avgPerMonth>=progress.paceNeeded?'var(--mint)':'var(--amber)'}">${progress.paceNeeded.toFixed(1)}/mês</div></div>` : ''}
-              ${progress.monthlyRate ? `<div class="chip"><div class="lbl">Meta de ritmo</div><div class="val" style="color:${progress.avgPerMonth>=progress.monthlyRate?'var(--mint)':'var(--amber)'}">${progress.monthlyRate}/mês</div></div>` : ''}
-            </div>
-            ${progress.targetCount ? `
-              <div class="split-row-title" style="margin-top:14px;">A barra abaixo considera</div>
-              <div class="toggle-row" style="max-width:320px;margin-bottom:8px;">
-                <button class="${progress.progressMode==='feitos'?'on':''}" onclick="setShiftGoalProgressMode('feitos')">Só feitos</button>
-                <button class="${progress.progressMode==='feitos_agendados'?'on':''}" onclick="setShiftGoalProgressMode('feitos_agendados')">Feitos + agendados</button>
-              </div>
-            ` : ''}
-            ${progress.pctByCount!=null ? `<div class="progress-bar" style="margin-top:8px;"><div style="width:${progress.pctByCount}%"></div></div><div class="meta" style="margin-top:4px;">${progress.pctByCount.toFixed(0)}% concluído (${progress.countForBar} de ${progress.targetCount}${progress.progressMode==='feitos_agendados'?' — feitos + agendados':' — só feitos'})</div>` : ''}
-          ` : `<div class="infobox" style="margin-top:10px;">Marque plantões como "Recebido" ou "Parcial" (tipo de contrato "Plantão"), com data igual ou depois de "Contar a partir de", para o progresso começar a contar.</div>`}
         ` : ''}
       </div>
     </details>
@@ -1637,8 +1646,7 @@ function renderAgenda(){
   const monthLabel = new Date(agendaState.year, agendaState.month, 1).toLocaleDateString('pt-BR',{month:'long',year:'numeric'});
   el.innerHTML = `
     <div class="page-head"><div><h1>Agenda de Plantões</h1><p>Sua disponibilidade padrão e os plantões já marcados</p></div></div>
-    ${renderAvailabilityEditor()}
-    ${renderShiftGoalSection()}
+    ${renderShiftGoalProgressBar()}
     <section class="block">
       <div class="block-head">
         <h3>Calendário</h3>
@@ -1653,6 +1661,8 @@ function renderAgenda(){
         <div class="legend" style="margin-top:14px;"><span><i style="background:rgba(0,230,160,0.35)"></i>Disponível (☀️ dia · 🌙 noite)</span><span><i style="background:var(--violet)"></i>Já tem plantão marcado</span><span><i style="background:rgba(255,92,122,0.4)"></i>🚫 Indisponível (manual)</span></div>
       </div>
     </section>
+    ${renderAvailabilityEditor()}
+    ${renderShiftGoalEditor()}
   `;
 }
 function changeAgendaMonth(delta){
