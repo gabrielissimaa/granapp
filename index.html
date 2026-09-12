@@ -728,7 +728,6 @@ function applyRulesToExisting(){
     const rule = applyRules(t.description);
     if(rule){
       t.category = rule.category;
-      t.fixedVariable = rule.fixedVariable;
       t.essential = rule.essential;
       t.purpose = rule.purpose;
       count++;
@@ -888,8 +887,6 @@ function renderVisao(){
   const idealReserve = essAvg.avg * (data.settings.emergencyMonths||6);
   const reservaPct = idealReserve>0 ? Math.min(100,(reserva/idealReserve)*100) : 0;
 
-  const gastosFixos = despesasInRange(range, t=>t.fixedVariable==='fixo');
-  const gastosVariaveis = despesasInRange(range, t=>t.fixedVariable==='variavel');
   const gastosEssenciais = despesasInRange(range, t=>t.essential==='essencial');
   const gastosNaoEssenciais = despesasInRange(range, t=>t.essential==='nao-essencial');
   const gastosProfissionais = despesasInRange(range, t=>t.purpose==='profissional');
@@ -956,10 +953,8 @@ function renderVisao(){
       <div class="block-head"><h3>Indicadores do período</h3></div>
       <div class="chipgrid">
         <div class="chip"><div class="lbl">Taxa de investimento</div><div class="val" style="color:var(--violet)">${taxaInvestimento.toFixed(1)}%</div></div>
-        <div class="chip"><div class="lbl">Gastos fixos</div><div class="val">${fmtMoney(gastosFixos)}</div></div>
-        <div class="chip"><div class="lbl">Gastos variáveis</div><div class="val">${fmtMoney(gastosVariaveis)}</div></div>
-        <div class="chip"><div class="lbl">Gastos essenciais</div><div class="val">${fmtMoney(gastosEssenciais)}</div></div>
-        <div class="chip"><div class="lbl">Gastos não essenciais</div><div class="val">${fmtMoney(gastosNaoEssenciais)}</div></div>
+        <div class="chip"><div class="lbl">Gastos obrigatórios</div><div class="val">${fmtMoney(gastosEssenciais)}</div></div>
+        <div class="chip"><div class="lbl">Gastos não obrigatórios</div><div class="val">${fmtMoney(gastosNaoEssenciais)}</div></div>
         <div class="chip"><div class="lbl">Gastos profissionais</div><div class="val">${fmtMoney(gastosProfissionais)}</div></div>
       </div>
     </section>
@@ -982,13 +977,12 @@ function renderVisao(){
       </div>
     </section>
 
-    ${gastosPessoais+gastosProfissionais>0 || gastosEssenciais+gastosNaoEssenciais>0 || gastosFixos+gastosVariaveis>0 ? `
+    ${gastosPessoais+gastosProfissionais>0 || gastosEssenciais+gastosNaoEssenciais>0 ? `
     <section class="block">
       <div class="block-head"><h3>Distribuição de gastos</h3></div>
       <div class="panel">
         ${splitRow('Pessoal x Profissional', gastosPessoais, gastosProfissionais, 'Pessoal', 'Profissional', 'var(--mint)', 'var(--violet)')}
-        ${splitRow('Essencial x Não essencial', gastosEssenciais, gastosNaoEssenciais, 'Essencial', 'Não essencial', 'var(--mint)', 'var(--coral)')}
-        ${splitRow('Fixo x Variável', gastosFixos, gastosVariaveis, 'Fixo', 'Variável', 'var(--cyan)', 'var(--amber)')}
+        ${splitRow('Obrigatório x Não obrigatório', gastosEssenciais, gastosNaoEssenciais, 'Obrigatório', 'Não obrigatório', 'var(--mint)', 'var(--coral)')}
       </div>
     </section>` : ''}
 
@@ -1060,7 +1054,7 @@ function renderAnaliseFinanceira(){
       <div class="chip"><div class="lbl">Renda média mensal</div><div class="val">${fmtMoney(rendaMedia)}</div></div>
       <div class="chip"><div class="lbl">Menor renda</div><div class="val">${fmtMoney(rendaMin)}</div></div>
       <div class="chip"><div class="lbl">Maior renda</div><div class="val">${fmtMoney(rendaMax)}</div></div>
-      <div class="chip"><div class="lbl">Gasto essencial médio</div><div class="val">${fmtMoney(custoVida)}</div></div>
+      <div class="chip"><div class="lbl">Gasto obrigatório médio</div><div class="val">${fmtMoney(custoVida)}</div></div>
       <div class="chip"><div class="lbl">Cobertura da renda sobre custo de vida</div><div class="val" style="color:${cobertura>=100?'var(--mint)':'var(--coral)'}">${cobertura.toFixed(0)}%</div></div>
     </div>`;
 }
@@ -1068,7 +1062,7 @@ function renderAnaliseFinanceira(){
 /* =========================================================
    RENDER: LANÇAMENTOS
 ========================================================= */
-let lancFilter = { type:'all', purpose:'all', essential:'all', fixedVariable:'all', accountId:'all', unclassified:false, dateStart:'', dateEnd:'' };
+let lancFilter = { type:'all', purpose:'all', essential:'all', accountId:'all', unclassified:false, dateStart:'', dateEnd:'' };
 function shiftAsVirtualTx(sh){
   const ct = sh.contractType || 'Plantão';
   return {
@@ -1091,8 +1085,7 @@ function txRowHtml(t){
       <div class="desc"><div class="t">${escapeHtml(t.description)}</div></div>
       <span class="badge outline">${t.isShift ? 'plantão' : t.type}</span>
       ${t.category ? `<span class="badge" style="background:${color}26;color:${color}">${escapeHtml(t.category)}</span>` : ''}
-      ${t.fixedVariable ? `<span class="badge outline">${t.fixedVariable==='fixo'?'Fixo':'Variável'}</span>` : ''}
-      ${t.essential ? `<span class="badge outline">${t.essential==='essencial'?'Essencial':'Não essencial'}</span>` : ''}
+      ${t.essential ? `<span class="badge outline">${t.essential==='essencial'?'Obrigatório':'Não obrigatório'}</span>` : ''}
       ${t.purpose ? `<span class="badge outline">${t.purpose==='profissional'?'Profissional':'Pessoal'}</span>` : ''}
       <div class="acc">${acc?escapeHtml(acc.name):'—'}</div>
       <div class="amt num" style="color:${typeColor}">${sign}${fmtMoney(t.amount)}</div>
@@ -1113,7 +1106,6 @@ function renderLancamentos(){
   if(lancFilter.type!=='all') list = list.filter(t=>t.type===lancFilter.type);
   if(lancFilter.purpose!=='all') list = list.filter(t=>t.purpose===lancFilter.purpose);
   if(lancFilter.essential!=='all') list = list.filter(t=>t.essential===lancFilter.essential);
-  if(lancFilter.fixedVariable!=='all') list = list.filter(t=>t.fixedVariable===lancFilter.fixedVariable);
   if(lancFilter.accountId!=='all') list = list.filter(t=>t.accountId===lancFilter.accountId);
   if(lancFilter.unclassified) list = list.filter(t=>t.type==='despesa' && (!t.category || t.category==='A classificar'));
   if(lancFilter.dateStart) list = list.filter(t=>t.date>=lancFilter.dateStart);
@@ -1128,8 +1120,7 @@ function renderLancamentos(){
     <div class="filterbar">
       <select id="fType"><option value="all">Todos os tipos</option><option value="receita">Receita</option><option value="despesa">Despesa</option><option value="investimento">Investimento</option><option value="transferencia">Transferência</option></select>
       <select id="fPurpose"><option value="all">Pessoal/Profissional</option><option value="pessoal">Pessoal</option><option value="profissional">Profissional</option></select>
-      <select id="fEssential"><option value="all">Essencial/Não</option><option value="essencial">Essencial</option><option value="nao-essencial">Não essencial</option></select>
-      <select id="fFixed"><option value="all">Fixo/Variável</option><option value="fixo">Fixo</option><option value="variavel">Variável</option></select>
+      <select id="fEssential"><option value="all">Obrigatório/Não</option><option value="essencial">Obrigatório</option><option value="nao-essencial">Não obrigatório</option></select>
       <select id="fAccount"><option value="all">Todas as contas</option>${data.accounts.map(a=>`<option value="${a.id}">${escapeHtml(a.name)}</option>`).join('')}</select>
       <label style="display:flex;align-items:center;gap:6px;color:var(--text-muted);font-size:12.5px;">De <input type="date" id="fDateStart" style="padding:6px 8px;"></label>
       <label style="display:flex;align-items:center;gap:6px;color:var(--text-muted);font-size:12.5px;">até <input type="date" id="fDateEnd" style="padding:6px 8px;"></label>
@@ -1142,7 +1133,6 @@ function renderLancamentos(){
   document.getElementById('fType').value = lancFilter.type;
   document.getElementById('fPurpose').value = lancFilter.purpose;
   document.getElementById('fEssential').value = lancFilter.essential;
-  document.getElementById('fFixed').value = lancFilter.fixedVariable;
   document.getElementById('fAccount').value = lancFilter.accountId;
   document.getElementById('fDateStart').value = lancFilter.dateStart;
   document.getElementById('fDateEnd').value = lancFilter.dateEnd;
@@ -1150,7 +1140,6 @@ function renderLancamentos(){
   document.getElementById('fType').addEventListener('change',e=>{lancFilter.type=e.target.value;renderLancamentos();});
   document.getElementById('fPurpose').addEventListener('change',e=>{lancFilter.purpose=e.target.value;renderLancamentos();});
   document.getElementById('fEssential').addEventListener('change',e=>{lancFilter.essential=e.target.value;renderLancamentos();});
-  document.getElementById('fFixed').addEventListener('change',e=>{lancFilter.fixedVariable=e.target.value;renderLancamentos();});
   document.getElementById('fAccount').addEventListener('change',e=>{lancFilter.accountId=e.target.value;renderLancamentos();});
   document.getElementById('fDateStart').addEventListener('change',e=>{lancFilter.dateStart=e.target.value;renderLancamentos();});
   document.getElementById('fDateEnd').addEventListener('change',e=>{lancFilter.dateEnd=e.target.value;renderLancamentos();});
@@ -1196,10 +1185,7 @@ function renderTxExtraFields(t){
   if(txTypeState==='despesa'){
     box.innerHTML = `
       <div class="field"><label>Categoria</label><select id="f_cat">${allCategoryNames().map(c=>`<option ${t&&t.category===c?'selected':''}>${c}</option>`).join('')}</select></div>
-      <div class="field-row">
-        <div class="field"><label>Natureza</label><select id="f_fixed"><option value="fixo" ${t&&t.fixedVariable==='fixo'?'selected':''}>Fixo</option><option value="variavel" ${!t||t.fixedVariable==='variavel'?'selected':''}>Variável</option></select></div>
-        <div class="field"><label>Necessidade</label><select id="f_essential"><option value="essencial" ${t&&t.essential==='essencial'?'selected':''}>Essencial</option><option value="nao-essencial" ${!t||t.essential==='nao-essencial'?'selected':''}>Não essencial</option></select></div>
-      </div>
+      <div class="field"><label>Obrigatório?</label><select id="f_essential"><option value="essencial" ${t&&t.essential==='essencial'?'selected':''}>Obrigatório</option><option value="nao-essencial" ${!t||t.essential==='nao-essencial'?'selected':''}>Não obrigatório</option></select></div>
       <div class="field"><label>Finalidade</label><select id="f_purpose"><option value="pessoal" ${!t||t.purpose==='pessoal'?'selected':''}>Pessoal</option><option value="profissional" ${t&&t.purpose==='profissional'?'selected':''}>Profissional</option></select></div>
       <div class="field"><label>Conta / Cartão</label><select id="f_acc"><option value="">—</option>${accountOptions(t?t.accountId:null)}</select></div>
       <div class="field"><label>Observações</label><input id="f_notes" value="${t?escapeHtml(t.notes||''):''}" placeholder="opcional"></div>
@@ -1243,7 +1229,6 @@ function onDescInput(){
     const rule = applyRules(desc);
     if(rule && rule.category){
       const catSel = document.getElementById('f_cat'); if(catSel) catSel.value = rule.category;
-      const fixedSel = document.getElementById('f_fixed'); if(fixedSel && rule.fixedVariable) fixedSel.value = rule.fixedVariable;
       const essSel = document.getElementById('f_essential'); if(essSel && rule.essential) essSel.value = rule.essential;
       const purpSel = document.getElementById('f_purpose'); if(purpSel && rule.purpose) purpSel.value = rule.purpose;
     }
@@ -1257,7 +1242,6 @@ function saveTx(id){
   let extra = { type: txTypeState };
   if(txTypeState==='despesa'){
     extra.category = document.getElementById('f_cat').value;
-    extra.fixedVariable = document.getElementById('f_fixed').value;
     extra.essential = document.getElementById('f_essential').value;
     extra.purpose = document.getElementById('f_purpose').value;
     extra.accountId = document.getElementById('f_acc').value;
@@ -1746,7 +1730,7 @@ function renderOrcamento(){
   const spReceitaPendente = receitaPendenteInRange(curRange);
   const spReceitaTotalEsperada = spReceita + spReceitaPendente;
   const proLabore = data.settings.proLabore || 0;
-  const spGastosTotais = despesasInRange(curRange); // fixos+variáveis, essenciais+não essenciais — tudo desconta do pró-labore
+  const spGastosTotais = despesasInRange(curRange); // obrigatórios e não obrigatórios — tudo desconta do pró-labore
   const spDisponivel = proLabore - spGastosTotais;
   const metaInvestir = Math.max(0, spReceitaTotalEsperada - proLabore); // meta baseada no que você espera ganhar no mês todo (recebido + a receber), não só o que já caiu
   const investidoReal = investidoInRange(curRange);
@@ -1789,7 +1773,7 @@ function renderOrcamento(){
         <table class="datatable" style="margin-bottom:6px;">
           <tbody>
             <tr><td>Pró-labore</td><td class="num pos" style="text-align:right;">${fmtMoney(proLabore)}</td></tr>
-            <tr><td>(–) Gastos do mês (fixos, variáveis, essenciais e não essenciais)</td><td class="num neg" style="text-align:right;">${fmtMoney(spGastosTotais)}</td></tr>
+            <tr><td>(–) Gastos do mês (obrigatórios e não obrigatórios)</td><td class="num neg" style="text-align:right;">${fmtMoney(spGastosTotais)}</td></tr>
             <tr style="font-weight:700;"><td style="border-top:2px solid var(--border-hi);">Ainda disponível para gastar</td><td class="num" style="text-align:right;border-top:2px solid var(--border-hi);color:${spDisponivel>=0?'var(--mint)':'var(--coral)'};">${fmtMoney(spDisponivel)}</td></tr>
           </tbody>
         </table>
@@ -1822,6 +1806,39 @@ function renderOrcamento(){
       </div>
     </section>
 
+    ${data.investments.length ? `
+    <section class="block">
+      <div class="block-head"><h3>Distribuir a meta entre investimentos</h3></div>
+      <div class="panel" style="max-width:640px;">
+        <p style="color:var(--text-muted);font-size:13px;margin:0 0 14px 0;">Diga quanto da meta deste mês vai para cada investimento (em valor absoluto) — útil quando você tem investimentos com propósitos diferentes, como carro e reserva de emergência.</p>
+        ${data.investments.map(inv=>{
+          const alocado = (data.settings.investmentAllocations||{})[inv.id] || 0;
+          const investidoInv = investedThisMonthForInvestment(inv.id, curRange);
+          const pctInv = alocado>0 ? Math.min(100,(investidoInv/alocado)*100) : 0;
+          return `
+            <div style="padding:12px 0;border-bottom:1px solid var(--border);">
+              <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                <div style="flex:1;min-width:140px;font-size:13.5px;color:var(--text);font-weight:600;">${escapeHtml(inv.name)}</div>
+                <div style="display:flex;align-items:center;gap:6px;">
+                  <span style="font-size:12px;color:var(--text-muted);">Alocado este mês (R$)</span>
+                  <input type="number" step="10" style="width:100px;" value="${alocado||''}" placeholder="0,00" onchange="updateInvestmentAllocation('${inv.id}', this.value)">
+                </div>
+              </div>
+              ${alocado>0 ? `
+                <div class="progress-bar" style="margin-top:8px;"><div style="width:${pctInv}%"></div></div>
+                <div class="meta" style="margin-top:4px;">${fmtMoney(investidoInv)} de ${fmtMoney(alocado)} (${pctInv.toFixed(0)}%)</div>
+              ` : ''}
+            </div>`;
+        }).join('')}
+        ${(()=>{
+          const totalAlocado = data.investments.reduce((s,inv)=> s + ((data.settings.investmentAllocations||{})[inv.id]||0), 0);
+          const diff = metaInvestir - totalAlocado;
+          if(totalAlocado<=0) return '';
+          return `<div class="infobox" style="margin-top:12px;">Total alocado: ${fmtMoney(totalAlocado)} de ${fmtMoney(metaInvestir)} da meta${Math.abs(diff)>0.01 ? (diff>0 ? ` — ainda faltam ${fmtMoney(diff)} para alocar` : ` — você alocou ${fmtMoney(Math.abs(diff))} a mais que a meta`) : ' — tudo alocado certinho'}.</div>`;
+        })()}
+      </div>
+    </section>` : ''}
+
     <section class="block">
       <div class="block-head"><h3>% projetado x realizado (mês atual)</h3></div>
       <div class="panel" style="max-width:560px;overflow-x:auto;">
@@ -1829,12 +1846,12 @@ function renderOrcamento(){
           <thead><tr><th>Categoria</th><th style="text-align:right;">% projetado</th><th style="text-align:right;">% realizado</th></tr></thead>
           <tbody>
             <tr>
-              <td>Essenciais</td>
+              <td>Obrigatórias</td>
               <td style="text-align:right;"><input type="number" step="1" style="width:64px;" value="${targets.essencial}" onchange="updateBudgetTarget('essencial', this.value)">%</td>
               <td class="num" style="text-align:right;color:${pctEssencialReal>targets.essencial?'var(--coral)':'var(--mint)'}">${pctEssencialReal.toFixed(0)}%</td>
             </tr>
             <tr>
-              <td>Não essenciais</td>
+              <td>Não obrigatórios</td>
               <td style="text-align:right;"><input type="number" step="1" style="width:64px;" value="${targets.naoEssencial}" onchange="updateBudgetTarget('naoEssencial', this.value)">%</td>
               <td class="num" style="text-align:right;color:${pctNaoEssencialReal>targets.naoEssencial?'var(--coral)':'var(--mint)'}">${pctNaoEssencialReal.toFixed(0)}%</td>
             </tr>
@@ -1854,7 +1871,7 @@ function renderOrcamento(){
       <div class="block-head"><h3>Como tem se encaminhado (últimos meses)</h3></div>
       <div class="panel" style="max-width:640px;overflow-x:auto;">
         <table class="datatable">
-          <thead><tr><th>Mês</th><th style="text-align:right;">Essencial</th><th style="text-align:right;">Não essencial</th><th style="text-align:right;">Investimento</th></tr></thead>
+          <thead><tr><th>Mês</th><th style="text-align:right;">Obrigatório</th><th style="text-align:right;">Não obrigatório</th><th style="text-align:right;">Investimento</th></tr></thead>
           <tbody>
             ${historyRows.map(r=>`
               <tr>
@@ -1866,7 +1883,7 @@ function renderOrcamento(){
             <tr style="font-weight:700;"><td style="border-top:2px solid var(--border-hi);">Meta (projetado)</td><td class="num" style="text-align:right;border-top:2px solid var(--border-hi);">${targets.essencial}%</td><td class="num" style="text-align:right;border-top:2px solid var(--border-hi);">${targets.naoEssencial}%</td><td class="num" style="text-align:right;border-top:2px solid var(--border-hi);">${targets.investido}%</td></tr>
           </tbody>
         </table>
-        <p style="color:var(--text-muted);font-size:12px;margin:12px 0 0 0;">Vermelho = passou do projetado em essenciais/não essenciais. Âmbar = investiu menos que o projetado.</p>
+        <p style="color:var(--text-muted);font-size:12px;margin:12px 0 0 0;">Vermelho = passou do projetado em obrigatórios/não obrigatórios. Âmbar = investiu menos que o projetado.</p>
       </div>
     </section>` : ''}
   `;
@@ -1880,6 +1897,17 @@ function updateBudgetTarget(key, value){
 function updateProLabore(value){
   const v = parseFloat(value);
   data.settings.proLabore = isNaN(v) ? 0 : v;
+  scheduleSave();
+  renderOrcamento();
+}
+function investedThisMonthForInvestment(invId, range){
+  return data.transactions.filter(t=>t.type==='investimento' && t.linkedInvestmentId===invId && inRange(t.date,range)).reduce((s,t)=>s+t.amount,0);
+}
+function updateInvestmentAllocation(invId, value){
+  if(!data.settings.investmentAllocations) data.settings.investmentAllocations = {};
+  const v = parseFloat(value);
+  if(isNaN(v) || v<=0) delete data.settings.investmentAllocations[invId];
+  else data.settings.investmentAllocations[invId] = v;
   scheduleSave();
   renderOrcamento();
 }
@@ -1908,8 +1936,6 @@ function computeDRE(range, scope){
   despesaTx.forEach(t=>{ despesaByCat[t.category]=(despesaByCat[t.category]||0)+t.amount; });
   const totalDespesa = Object.values(despesaByCat).reduce((a,b)=>a+b,0);
 
-  const fixo = despesaTx.filter(t=>t.fixedVariable==='fixo').reduce((s,t)=>s+t.amount,0);
-  const variavel = despesaTx.filter(t=>t.fixedVariable==='variavel').reduce((s,t)=>s+t.amount,0);
   const essencial = despesaTx.filter(t=>t.essential==='essencial').reduce((s,t)=>s+t.amount,0);
   const naoEssencial = despesaTx.filter(t=>t.essential==='nao-essencial').reduce((s,t)=>s+t.amount,0);
 
@@ -1981,10 +2007,8 @@ function renderDRE(){
       </table>
 
       <div class="chipgrid" style="margin-bottom:20px;">
-        <div class="chip"><div class="lbl">Fixas</div><div class="val">${fmtMoney(r.fixo)}</div></div>
-        <div class="chip"><div class="lbl">Variáveis</div><div class="val">${fmtMoney(r.variavel)}</div></div>
-        <div class="chip"><div class="lbl">Essenciais</div><div class="val">${fmtMoney(r.essencial)}</div></div>
-        <div class="chip"><div class="lbl">Não essenciais</div><div class="val">${fmtMoney(r.naoEssencial)}</div></div>
+        <div class="chip"><div class="lbl">Obrigatórias</div><div class="val">${fmtMoney(r.essencial)}</div></div>
+        <div class="chip"><div class="lbl">Não obrigatórias</div><div class="val">${fmtMoney(r.naoEssencial)}</div></div>
       </div>
 
       <div class="hero" style="grid-template-columns:1fr 1fr;margin-bottom:0;">
@@ -2364,11 +2388,11 @@ function renderReserva(){
   const aporteMensal = reservaTargetMonths ? restante/reservaTargetMonths : null;
 
   el.innerHTML = `
-    <div class="page-head"><div><h1>Reserva de emergência</h1><p>Baseada no seu gasto essencial médio mensal</p></div></div>
+    <div class="page-head"><div><h1>Reserva de emergência</h1><p>Baseada no seu gasto obrigatório médio mensal</p></div></div>
 
-    ${essAvg.monthsWithData===0 ? `<div class="infobox">Ainda não há despesas marcadas como "essenciais" para calcular sua reserva ideal. Classifique alguns gastos em Lançamentos.</div>` : `
+    ${essAvg.monthsWithData===0 ? `<div class="infobox">Ainda não há despesas marcadas como "obrigatórias" para calcular sua reserva ideal. Classifique alguns gastos em Lançamentos.</div>` : `
     <div class="hero">
-      <div class="hero-cell"><div class="label">Gasto essencial médio</div><div class="value num">${fmtMoney(essAvg.avg)}</div></div>
+      <div class="hero-cell"><div class="label">Gasto obrigatório médio</div><div class="value num">${fmtMoney(essAvg.avg)}</div></div>
       <div class="hero-cell total"><div class="label">Reserva ideal</div><div class="value num">${fmtMoney(ideal)}</div><div class="sub">${months} meses de gasto essencial</div></div>
       <div class="hero-cell"><div class="label">Reserva atual</div><div class="value num pos">${fmtMoney(atual)}</div></div>
     </div>
@@ -2445,7 +2469,7 @@ function openSubModal(id){
     </div>
     <div class="field-row">
       <div class="field"><label>Finalidade</label><select id="f_spurpose"><option value="pessoal" ${!s||s.purpose==='pessoal'?'selected':''}>Pessoal</option><option value="profissional" ${s&&s.purpose==='profissional'?'selected':''}>Profissional</option></select></div>
-      <div class="field"><label>Necessidade</label><select id="f_sessential"><option value="essencial" ${s&&s.essential==='essencial'?'selected':''}>Essencial</option><option value="nao-essencial" ${!s||s.essential==='nao-essencial'?'selected':''}>Não essencial</option></select></div>
+      <div class="field"><label>Obrigatório?</label><select id="f_sessential"><option value="essencial" ${s&&s.essential==='essencial'?'selected':''}>Obrigatório</option><option value="nao-essencial" ${!s||s.essential==='nao-essencial'?'selected':''}>Não obrigatório</option></select></div>
     </div>
     <div class="field"><label>Conta</label><select id="f_sacc"><option value="">—</option>${accountOptions(s?s.accountId:null)}</select></div>
     <div class="field"><label>Status</label><select id="f_sstatus"><option ${!s||s.status==='Ativa'?'selected':''}>Ativa</option><option ${s&&s.status==='Cancelada'?'selected':''}>Cancelada</option></select></div>
@@ -2477,7 +2501,7 @@ function launchSubPayment(id){
   const s = data.subscriptions.find(x=>x.id===id);
   data.transactions.push({
     id: uid(), type:'despesa', description: s.name, amount: s.amount, date: todayStr(),
-    category: s.category, fixedVariable:'fixo', essential: s.essential||'nao-essencial', purpose: s.purpose||'pessoal',
+    category: s.category, essential: s.essential||'nao-essencial', purpose: s.purpose||'pessoal',
     accountId: s.accountId||'', notes:'Lançado a partir de Assinaturas'
   });
   renderAll(); scheduleSave(); toast('Pagamento lançado em Lançamentos.');
@@ -2506,7 +2530,6 @@ function renderRegras(){
               <td class="num">${r.priority??'-'}</td>
               <td>${r.matchType==='contains'?'contém':r.matchType==='equals'?'é igual a':'começa com'} "<b>${escapeHtml(r.matchText)}</b>"</td>
               <td><span class="badge" style="background:${colorForCategory(r.category)}26;color:${colorForCategory(r.category)}">${escapeHtml(r.category||'—')}</span></td>
-              <td>${r.fixedVariable||'—'}</td>
               <td>${r.essential||'—'}</td>
               <td>${r.purpose||'—'}</td>
               <td>${r.active?'✓':'—'}</td>
@@ -2529,10 +2552,7 @@ function openRuleModal(id){
       <div class="field"><label>Texto</label><input id="f_rtext" value="${r?escapeHtml(r.matchText):''}" placeholder="Ex: uber"></div>
     </div>
     <div class="field"><label>Categoria</label><select id="f_rcat">${allCategoryNames().map(c=>`<option ${r&&r.category===c?'selected':''}>${c}</option>`).join('')}</select></div>
-    <div class="field-row">
-      <div class="field"><label>Natureza</label><select id="f_rfixed"><option value="fixo" ${r&&r.fixedVariable==='fixo'?'selected':''}>Fixo</option><option value="variavel" ${!r||r.fixedVariable==='variavel'?'selected':''}>Variável</option></select></div>
-      <div class="field"><label>Necessidade</label><select id="f_ress"><option value="essencial" ${r&&r.essential==='essencial'?'selected':''}>Essencial</option><option value="nao-essencial" ${!r||r.essential==='nao-essencial'?'selected':''}>Não essencial</option></select></div>
-    </div>
+    <div class="field"><label>Obrigatório?</label><select id="f_ress"><option value="essencial" ${r&&r.essential==='essencial'?'selected':''}>Obrigatório</option><option value="nao-essencial" ${!r||r.essential==='nao-essencial'?'selected':''}>Não obrigatório</option></select></div>
     <div class="field-row">
       <div class="field"><label>Finalidade</label><select id="f_rpurp"><option value="pessoal" ${!r||r.purpose==='pessoal'?'selected':''}>Pessoal</option><option value="profissional" ${r&&r.purpose==='profissional'?'selected':''}>Profissional</option></select></div>
       <div class="field"><label>Prioridade (menor = primeiro)</label><input id="f_rprio" type="number" value="${r?r.priority??10:10}"></div>
@@ -2551,7 +2571,6 @@ function saveRule(id){
     matchType: document.getElementById('f_rmatch').value,
     matchText,
     category: document.getElementById('f_rcat').value,
-    fixedVariable: document.getElementById('f_rfixed').value,
     essential: document.getElementById('f_ress').value,
     purpose: document.getElementById('f_rpurp').value,
     priority: parseInt(document.getElementById('f_rprio').value)||10,
@@ -2568,8 +2587,7 @@ function runApplyRulesManually(){
       const rule = applyRules(t.description);
       if(rule){
         t.category = rule.category;
-        t.fixedVariable = rule.fixedVariable;
-        t.essential = rule.essential;
+          t.essential = rule.essential;
         t.purpose = rule.purpose;
         count++;
       }
@@ -2984,7 +3002,7 @@ function buildPreview(){
     rows.push({
       id: uid(), date, description, amount: Math.abs(amount), type,
       category: rule ? rule.category : (type==='despesa' ? 'A classificar' : 'Outros'),
-      fixedVariable: rule ? rule.fixedVariable : null, essential: rule ? rule.essential : null, purpose: rule ? rule.purpose : (type==='despesa'?'pessoal':null),
+      essential: rule ? rule.essential : null, purpose: rule ? rule.purpose : (type==='despesa'?'pessoal':null),
       duplicate: dup, include: !dup,
     });
   }
@@ -3031,7 +3049,7 @@ function confirmImport(){
   importState.rows.filter(r=>r.include).forEach(r=>{
     data.transactions.push({
       id: uid(), type: r.type, description: r.description, amount: r.amount, date: r.date,
-      category: r.category, fixedVariable: r.fixedVariable, essential: r.essential, purpose: r.purpose,
+      category: r.category, essential: r.essential, purpose: r.purpose,
       accountId: accId, notes: 'Importado de extrato'
     });
     count++;
@@ -3068,7 +3086,7 @@ function renderTutorial(){
       <p>É a tela inicial: mostra o resumo do período que você escolher (mês atual, últimos 3/6/12 meses ou personalizado).</p>
       <ul>
         <li><b>Patrimônio líquido</b>: contas + investimentos, sempre em tempo real.</li>
-        <li><b>Indicadores</b>: taxa de investimento, gastos fixos/variáveis, essenciais/não essenciais, profissionais.</li>
+        <li><b>Indicadores</b>: taxa de investimento, gastos obrigatórios/não obrigatórios, profissionais.</li>
         <li><b>Evolução</b>: gráfico de receitas, despesas e investido nos últimos 6 meses.</li>
         <li>A seção <b>Análise</b> só aparece depois de ~2 meses de uso — com pouco histórico, médias e tendências não são confiáveis.</li>
       </ul>
@@ -3077,7 +3095,7 @@ function renderTutorial(){
     ${tutoSection('Lançamentos', `
       <p>O registro central de tudo: receitas, despesas, investimentos e transferências.</p>
       <ul>
-        <li>Toda <b>despesa</b> tem 3 classificações independentes: <b>Fixo/Variável</b>, <b>Essencial/Não essencial</b> e <b>Pessoal/Profissional</b> — nada é presumido pelo nome da categoria, você escolhe.</li>
+        <li>Toda <b>despesa</b> tem 2 classificações independentes: <b>Obrigatório/Não obrigatório</b> e <b>Pessoal/Profissional</b> — nada é presumido pelo nome da categoria, você escolhe.</li>
         <li><b>Transferências</b> entre suas próprias contas e <b>aportes em investimento</b> não entram como receita nem despesa — evita contar o mesmo dinheiro duas vezes.</li>
         <li>Use os filtros no topo (inclusive "só a classificar") para revisar rapidamente o que falta categorizar.</li>
         <li>Ao digitar a descrição, as <b>Regras</b> já preenchem categoria e classificação automaticamente, se houver uma que combine.</li>
@@ -3113,9 +3131,9 @@ function renderTutorial(){
     ${tutoSection('Orçamento', `
       <p>Tem três partes, nessa ordem:</p>
       <ul>
-        <li><b>Quanto ainda posso gastar</b>: você informa seu <b>pró-labore mensal</b> (quanto vai poder gastar de fato). Todas as despesas do mês (fixas, variáveis, essenciais ou não) descontam desse valor — o número final é o que ainda sobra pra gastar, e vai diminuindo conforme você lança gastos.</li>
+        <li><b>Quanto ainda posso gastar</b>: você informa seu <b>pró-labore mensal</b> (quanto vai poder gastar de fato). Todas as despesas do mês (obrigatórias ou não) descontam desse valor — o número final é o que ainda sobra pra gastar, e vai diminuindo conforme você lança gastos.</li>
         <li><b>Meta de investimento do mês</b>: o que sobra da sua receita além do pró-labore vira automaticamente a meta de quanto investir naquele mês, com uma barra mostrando quanto você já investiu perto dessa meta. As metas da aba Metas não entram aqui de novo — como cada meta já está (ou pode estar) vinculada a um investimento, contar as duas coisas seria duplicar o mesmo dinheiro.</li>
-        <li><b>% projetado x realizado</b>: compara a porcentagem da sua renda que você planeja gastar com essenciais, não essenciais e investimentos contra o que de fato aconteceu no mês, com base na classificação que você já faz ao lançar cada despesa. Se houver despesas sem essa classificação, o app avisa.</li>
+        <li><b>% projetado x realizado</b>: compara a porcentagem da sua renda que você planeja gastar com obrigatórios, não obrigatórios e investimentos contra o que de fato aconteceu no mês, com base na classificação que você já faz ao lançar cada despesa. Se houver despesas sem essa classificação, o app avisa.</li>
       </ul>
     `)}
 
@@ -3135,7 +3153,7 @@ function renderTutorial(){
 
     ${tutoSection('Metas e Reserva de emergência', `
       <p><b>Metas</b>: valor alvo, valor atual e prazo opcional (o app sugere o aporte mensal necessário). O plano mensal pode ser um <b>valor único</b> (mesmo valor todo mês) ou <b>variável</b> (você ajusta mês a mês). Use "+ Registrar aporte" para acompanhar a evolução dos últimos 6 meses.</p>
-      <p><b>Reserva de emergência</b> é calculada de um jeito específico: você escolhe quantos meses de cobertura quer (3/6/9/12), e o app multiplica isso pelo seu <b>gasto essencial médio real</b> dos últimos meses. Marque uma conta como "esta é minha reserva" (em Contas) ou um investimento com objetivo "Reserva de emergência" para que o valor conte automaticamente aqui.</p>
+      <p><b>Reserva de emergência</b> é calculada de um jeito específico: você escolhe quantos meses de cobertura quer (3/6/9/12), e o app multiplica isso pelo seu <b>gasto obrigatório médio real</b> dos últimos meses. Marque uma conta como "esta é minha reserva" (em Contas) ou um investimento com objetivo "Reserva de emergência" para que o valor conte automaticamente aqui.</p>
     `)}
 
     ${tutoSection('Assinaturas e Contas', `
