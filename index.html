@@ -334,6 +334,7 @@
     <div class="page" id="page-assinaturas"></div>
     <div class="page" id="page-regras"></div>
     <div class="page" id="page-categorias"></div>
+    <div class="page" id="page-notas"></div>
     <div class="page" id="page-contas"></div>
     <div class="page" id="page-importar"></div>
     <div class="page" id="page-tutorial"></div>
@@ -360,6 +361,7 @@ let data = {
   netWorthSnapshots: [],
   budgetOverrides: {},
   categories: [],      // {id, name, group: 'pessoal'|'profissional'} — editável pelo usuário
+  notes: [],           // {id, title, type:'texto'|'planilha', content, grid, createdAt, updatedAt}
   availability: null,  // disponibilidade semanal para plantões
   shiftGoal: null,      // meta de quantidade de plantões (Agenda)
   settings: { emergencyMonths: 6 }
@@ -457,6 +459,7 @@ const NAV_GROUPS = [
     {id:'assinaturas', label:'Assinaturas', icon:'M17 8a5 5 0 00-10 0v3H5l1.5 10h11L19 11h-2V8z'},
     {id:'regras', label:'Regras', icon:'M4 6h16M7 12h10M10 18h4'},
     {id:'categorias', label:'Categorias', icon:'M7 7h.01M3 5a2 2 0 012-2h6.586a1 1 0 01.707.293l8 8a1 1 0 010 1.414l-8.586 8.586a1 1 0 01-1.414 0l-8-8A1 1 0 013 12.586V5z'},
+    {id:'notas', label:'Notas & Planejamento', icon:'M9 12h6m-6 4h6m-7 5h8a2 2 0 002-2V7a2 2 0 00-2-2h-2.586a1 1 0 01-.707-.293l-1.414-1.414A1 1 0 0011.586 3H8a2 2 0 00-2 2v13a2 2 0 002 2z'},
     {id:'importar', label:'Importar extrato', icon:'M12 3v12m0 0l-4-4m4 4l4-4M4 19h16'},
   ]},
   {label:'AJUDA', items:[
@@ -2724,6 +2727,153 @@ function deleteCategoryFlow(id){
 }
 
 /* =========================================================
+   RENDER: NOTAS & PLANEJAMENTO
+========================================================= */
+let notasOpenId = null;
+function createNota(type){
+  const n = {
+    id: uid(),
+    title: type==='texto' ? 'Nova nota' : 'Nova planilha',
+    type,
+    content: '',
+    grid: type==='planilha' ? [['','',''],['','',''],['','','']] : null,
+    createdAt: todayStr(), updatedAt: todayStr()
+  };
+  data.notes.push(n);
+  notasOpenId = n.id;
+  renderAll(); scheduleSave();
+}
+function openNota(id){ notasOpenId = id; renderNotas(); }
+function closeNota(){ notasOpenId = null; renderNotas(); }
+function deleteNota(id){
+  data.notes = data.notes.filter(x=>x.id!==id);
+  if(notasOpenId===id) notasOpenId = null;
+  renderAll(); scheduleSave(); toast('Nota excluída.');
+}
+function updateNotaTitle(id, value){
+  const n = data.notes.find(x=>x.id===id);
+  n.title = value.trim() || (n.type==='texto'?'Nova nota':'Nova planilha');
+  n.updatedAt = todayStr();
+  scheduleSave();
+}
+function updateNotaContent(id, value){
+  const n = data.notes.find(x=>x.id===id);
+  n.content = value;
+  n.updatedAt = todayStr();
+  scheduleSave();
+}
+function updateSheetCell(id, r, c, value){
+  const n = data.notes.find(x=>x.id===id);
+  n.grid[r][c] = value;
+  n.updatedAt = todayStr();
+  scheduleSave();
+}
+function addSheetRow(id){
+  const n = data.notes.find(x=>x.id===id);
+  const cols = (n.grid[0]||['','','']).length;
+  n.grid.push(new Array(cols).fill(''));
+  n.updatedAt = todayStr();
+  scheduleSave(); renderNotas();
+}
+function addSheetCol(id){
+  const n = data.notes.find(x=>x.id===id);
+  n.grid.forEach(row=>row.push(''));
+  n.updatedAt = todayStr();
+  scheduleSave(); renderNotas();
+}
+function removeSheetRow(id){
+  const n = data.notes.find(x=>x.id===id);
+  if(n.grid.length>1) n.grid.pop();
+  n.updatedAt = todayStr();
+  scheduleSave(); renderNotas();
+}
+function removeSheetCol(id){
+  const n = data.notes.find(x=>x.id===id);
+  if((n.grid[0]||[]).length>1) n.grid.forEach(row=>row.pop());
+  n.updatedAt = todayStr();
+  scheduleSave(); renderNotas();
+}
+function notaPreview(n){
+  if(n.type==='texto') return (n.content||'').trim().slice(0,110) || 'Sem conteúdo ainda.';
+  const rows = n.grid||[];
+  return rows.length ? `${rows.length} linha(s) × ${(rows[0]||[]).length} coluna(s)` : 'Planilha vazia';
+}
+function notaCardHtml(n, i){
+  const color = colorForIndex(i);
+  return `
+    <div class="card" style="--accent:${color};cursor:pointer;" onclick="openNota('${n.id}')">
+      <div class="actions" onclick="event.stopPropagation()">
+        <button class="iconbtn" onclick="deleteNota('${n.id}')" title="Excluir"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6 7h12M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2m2 0v13a1 1 0 01-1 1H8a1 1 0 01-1-1V7h10z"/></svg></button>
+      </div>
+      <div class="k">${n.type==='texto'?'Nota de texto':'Mini planilha'}</div>
+      <div class="v">${escapeHtml(n.title||'Sem título')}</div>
+      <div class="t" style="color:var(--text-muted);font-size:12.5px;">${escapeHtml(notaPreview(n))}</div>
+      <div class="meta">Atualizado em ${fmtDate(n.updatedAt||n.createdAt)}</div>
+    </div>`;
+}
+function renderMiniSheet(n){
+  const grid = n.grid && n.grid.length ? n.grid : [['','','']];
+  const cols = grid[0] ? grid[0].length : 3;
+  return `
+    <div class="panel" style="overflow-x:auto;">
+      <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
+        <button class="btn ghost sm" onclick="addSheetRow('${n.id}')">+ Linha</button>
+        <button class="btn ghost sm" onclick="addSheetCol('${n.id}')">+ Coluna</button>
+        <button class="btn ghost sm" onclick="removeSheetRow('${n.id}')">– Linha</button>
+        <button class="btn ghost sm" onclick="removeSheetCol('${n.id}')">– Coluna</button>
+      </div>
+      <table class="datatable" style="min-width:${cols*112}px;border-spacing:4px;border-collapse:separate;">
+        <tbody>
+          ${grid.map((row,ri)=>`
+            <tr>
+              ${row.map((cell,ci)=>`
+                <td style="padding:2px;border:none;"><input value="${escapeHtml(cell||'')}" style="width:100%;min-width:104px;background:rgba(255,255,255,0.04);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:7px 9px;font-family:'JetBrains Mono',monospace;font-size:12.5px;" onchange="updateSheetCell('${n.id}', ${ri}, ${ci}, this.value)"></td>
+              `).join('')}
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+function renderNotaEditor(id){
+  const el = document.getElementById('page-notas');
+  const n = data.notes.find(x=>x.id===id);
+  if(!n){ notasOpenId=null; renderNotas(); return; }
+  el.innerHTML = `
+    <div class="page-head">
+      <div style="flex:1;">
+        <button class="btn ghost sm" onclick="closeNota()" style="margin-bottom:12px;">‹ Voltar</button>
+        <input value="${escapeHtml(n.title||'')}" style="font-family:'Space Grotesk',sans-serif;font-size:24px;font-weight:700;background:none;border:none;color:#fff;padding:0;width:100%;outline:none;" onchange="updateNotaTitle('${n.id}', this.value)">
+        <p style="color:var(--text-muted);font-size:12px;margin-top:4px;">${n.type==='texto'?'Nota de texto':'Mini planilha'} · atualizado em ${fmtDate(n.updatedAt||n.createdAt)}</p>
+      </div>
+      <button class="btn ghost" onclick="deleteNota('${n.id}')">Excluir</button>
+    </div>
+    ${n.type==='texto' ? `
+      <div class="panel">
+        <textarea style="width:100%;min-height:360px;background:rgba(255,255,255,0.04);border:1px solid var(--border);border-radius:10px;color:var(--text);padding:16px;font-family:'Inter',sans-serif;font-size:14px;line-height:1.65;resize:vertical;outline:none;" placeholder="Escreva suas ideias, planos financeiros, o que quiser..." onchange="updateNotaContent('${n.id}', this.value)">${escapeHtml(n.content||'')}</textarea>
+      </div>
+    ` : renderMiniSheet(n)}
+  `;
+}
+function renderNotas(){
+  const el = document.getElementById('page-notas');
+  if(notasOpenId){ renderNotaEditor(notasOpenId); return; }
+  const list = [...data.notes].sort((a,b)=>(b.updatedAt||b.createdAt||'').localeCompare(a.updatedAt||a.createdAt||''));
+  el.innerHTML = `
+    <div class="page-head">
+      <div><h1>Notas & Planejamento</h1><p>Anote ideias, planos financeiros, ou monte uma tabela rápida</p></div>
+      <div style="display:flex;gap:8px;">
+        <button class="btn ghost" onclick="createNota('texto')">+ Nota de texto</button>
+        <button class="btn accent" onclick="createNota('planilha')">+ Mini planilha</button>
+      </div>
+    </div>
+    <div class="cards">
+      ${list.length ? list.map((n,i)=>notaCardHtml(n,i)).join('') : '<div class="empty">Nenhuma nota ainda. Crie uma nota de texto pra ideias soltas, ou uma mini planilha pra simular números rápido.</div>'}
+    </div>
+  `;
+}
+
+/* =========================================================
    RENDER: CONTAS
 ========================================================= */
 function accountCardHtml(a,i){
@@ -3171,6 +3321,15 @@ function renderTutorial(){
       </ul>
     `)}
 
+    ${tutoSection('Notas & Planejamento', `
+      <p>Um espaço livre pra ideias e planejamentos que não se encaixam em nenhuma outra aba.</p>
+      <ul>
+        <li><b>Nota de texto</b>: um campo de texto simples, do jeito que você quiser escrever.</li>
+        <li><b>Mini planilha</b>: uma tabela editável, célula por célula, com botões pra adicionar ou remover linhas e colunas — útil pra simular contas rápidas sem precisar abrir outro app.</li>
+        <li>Clique numa nota pra abrir e editar; o botão "‹ Voltar" retorna pra lista. Tudo salva automaticamente conforme você sai do campo.</li>
+      </ul>
+    `)}
+
     ${tutoSection('Importar extrato', `
       <p>Aceita arquivos <b>CSV</b>, <b>Excel (.xlsx)</b> ou <b>PDF</b> do seu banco.</p>
       <ul>
@@ -3224,6 +3383,7 @@ function renderAll(){
   renderAssinaturas();
   renderRegras();
   renderCategorias();
+  renderNotas();
   renderContas();
   renderImportar();
   renderTutorial();
