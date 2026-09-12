@@ -1944,7 +1944,7 @@ function computeDRE(range, scope){
   const resultado = totalReceita - totalDespesa;
   const margem = totalReceita>0 ? (resultado/totalReceita)*100 : 0;
 
-  return { receitaBySource, totalReceita, despesaByCat, totalDespesa, fixo, variavel, essencial, naoEssencial, investido, resultado, margem };
+  return { receitaBySource, totalReceita, despesaByCat, totalDespesa, essencial, naoEssencial, investido, resultado, margem };
 }
 function setDreScope(s){ dreState.scope = s; renderDRE(); }
 function renderDRE(){
